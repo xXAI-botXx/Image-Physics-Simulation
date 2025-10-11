@@ -192,7 +192,11 @@ def advanced_imshow(img, title=None, image_width=10, axis=False,
         Whether to invert image colors.
     """
     original_style = plt.rcParams.copy()
-    img_shape = img.shape
+    try:
+        img_shape = img.shape
+    except Exception:
+        img = np.array(img)
+        img_shape = img.shape
     # Transform to 4D array [N, H, W, C]
     if len(img_shape) == 2:
         img = img.reshape(1, img_shape[0], img_shape[1], 1)

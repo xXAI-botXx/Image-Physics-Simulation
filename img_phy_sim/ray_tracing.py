@@ -30,13 +30,19 @@ import cv2
 # >>> Helper <<<
 # --------------
 
-def get_linear_degree_range(step_size=10):
-    return list(range(0, 360, step_size))
+def get_linear_degree_range(step_size=10, offset=0):
+    degree_range = list(range(0, 360, step_size))
+    return list(map(lambda x: x+offset, degree_range))
 
 
 def degree_to_vector(degree):
     rad = math.radians(degree)
     return [math.cos(rad), math.sin(rad)]
+
+def vector_to_degree(vector):
+    x, y = vector
+    degree = math.degrees(math.atan2(y, x))  # atan2 returns angles between -180° and 180°
+    return int( degree % 360 ) 
 
 
 # ----------------------
@@ -180,19 +186,42 @@ def update_pixel_position(direction_in_degree, cur_position, target_line):
 
 
 
-def trace_beam(abs_position, img, walls, direction_in_degree, ray=[]):
+def calc_reflection(collide_vector, wall_vector):
+    # normalize both
+    collide_vector = np.array(collide_vector, dtype=float)
+    collide_vector /= np.linalg.norm(collide_vector)
+    wall_vector = np.array(wall_vector, dtype=float)
+    wall_vector /= np.linalg.norm(wall_vector)
+
+    # calculate the normal of the wall
+    normal_wall_vector_1 = np.array([-wall_vector[1], wall_vector[0]])  # rotated +90°
+    normal_wall_vector_2 = np.array([wall_vector[1], -wall_vector[0]])  # rotated -90°
+
+    # decide which vector is the right one
+    #   -> dot product tells which normal faces the incoming vector
+    #   -> dor product shows how similiar 2 vectors are => smaller 0 means they show against each other => right vector
+    if np.dot(collide_vector, normal_wall_vector_1) < 0:
+        normal_wall_vector = normal_wall_vector_1
+    else:
+        normal_wall_vector = normal_wall_vector_2
+    
+    # calc the reflection
+    return collide_vector - 2 * np.dot(collide_vector, normal_wall_vector) * normal_wall_vector
+
+
+def trace_beam(abs_position, img, wall_map, direction_in_degree, max_depth=3, ray_depth=0):
     direction_in_degree = direction_in_degree % 360
     IMG_WIDTH, IMG_HEIGHT =  get_width_height(img)
 
+    ray = []
     current_ray_line = [abs_position[0], abs_position[1], abs_position[0], abs_position[1]]
 
     # calculate a target line to update the pixels
     #   target vector
-    dx = math.cos(direction_in_degree)
-    dy = math.sin(direction_in_degree)
-
+    dx = math.cos(math.radians(direction_in_degree))
+    dy = math.sin(math.radians(direction_in_degree))
     target_line = [abs_position[0], abs_position[1], abs_position[0], abs_position[1]]
-    while (0 <= target_line[2] <= IMG_WIDTH) or (0 <= target_line[3] <= IMG_HEIGHT):
+    while (0 <= target_line[2] <= IMG_WIDTH) and (0 <= target_line[3] <= IMG_HEIGHT):
         target_line[2] += 0.01 * dx
         target_line[3] += 0.01 * dy
 
@@ -203,37 +232,155 @@ def trace_beam(abs_position, img, walls, direction_in_degree, ray=[]):
         current_position = update_pixel_position(direction_in_degree=direction_in_degree, cur_position=current_position, target_line=target_line)
 
         # check if ray is at end
-        next_pixel = img[current_position[0], current_position[1]]
+        if not (0 <= current_position[0] < IMG_WIDTH and 0 <= current_position[1] < IMG_HEIGHT):
+            ray += [current_ray_line]
+            break
 
-    ray += [current_ray_line]
+        next_pixel = img[int(current_position[1]), int(current_position[0])]
+
+        # check if hit building
+        if float(next_pixel) == 0.0:
+            ray += [current_ray_line]
+
+            # get building wall reflection angle
+            building_angle = wall_map[int(current_position[0]), int(current_position[1])]
+            wall_vector = degree_to_vector(building_angle)
+
+            # calc new direct vector
+            new_direction = calc_reflection(collide_vector=degree_to_vector(direction_in_degree), wall_vector=wall_vector)
+            new_direction_in_degree = vector_to_degree(new_direction)
+
+            # start new beam calculation
+            if ray_depth <= max_depth:
+                ray += trace_beam(abs_position=current_ray_line[2:4], img=img, wall_map=wall_map, direction_in_degree=new_direction_in_degree, ray_depth=ray_depth+1)
+            
+            break
+        else:
+            # update current ray
+            current_ray_line[2] = current_position[0]
+            current_ray_line[3] = current_position[1]
+    
     return ray
 
 
 
 def trace_beams(rel_position, img_src, directions_in_degree):
-    img = open(src=img_src, should_scale=True, should_print=True)
+    img = open(src=img_src, should_scale=True, should_print=False)
     IMG_WIDTH, IMG_HEIGHT =  get_width_height(img)
     abs_position = (rel_position[0] * IMG_WIDTH, rel_position[1] * IMG_HEIGHT)
 
-    walls = get_walls(img)
+    wall_map = get_wall_map(img, thickness=1)
 
     rays = []
     for direction_in_degree in directions_in_degree:
-        rays += [trace_beam(position=abs_position, img=img, walls=walls, direction_in_degree=direction_in_degree)]
+        rays += [trace_beam(abs_position=abs_position, img=img, wall_map=wall_map, direction_in_degree=direction_in_degree)]
 
     return rays
 
 
+def get_max_width_height(rays):
+    max_x = 0
+    max_y = 0
+    for ray in rays:
+        for x1, y1, x2, y2 in ray:
+            max_x = max(max_x, x1)
+            max_x = max(max_x, x2)
 
-def draw_rays_in_image(rays, img):
-    pass
+            max_y = max(max_y, y1)
+            max_y = max(max_y, y2)
+    return max_x, max_y
+
+def scale_rays(rays, max_x=None, max_y=None, new_max_x=None, new_max_y=None):
+    if max_x is None or max_y is None:
+        max_x, max_y = get_max_width_height(rays)
+
+    scaled_rays = []
+    for ray in rays:
+        scaled_ray = []
+        for x1, y1, x2, y2 in ray:
+            x1 /= max_x
+            y1 /= max_y
+            x2 /= max_x
+            y2 /= max_y
+
+            if new_max_x is not None and new_max_y is not None:
+                x1 *= new_max_x
+                y1 *= new_max_y
+                x2 *= new_max_x
+                y2 *= new_max_y
+
+            scaled_ray += [[x1, y1, x2, y2]]
+        scaled_rays += [scaled_ray]
+    return scaled_rays
+
+def draw_rays(rays, individual_ray_outpout=False, as_channels=True, 
+              img_background=None, ray_value=255, ray_thickness=1, 
+              img_shape=(256, 256), dtype=float, standard_value=0,
+              should_scale_rays_to_image=True):
+    # prepare background image
+    if img_background is None:
+        img = np.full(shape=img_shape, fill_value=dtype(standard_value), dtype=dtype)
+    else:
+        img = img_background.copy()
+
+    # rescale rays to fit inside image bounds if desired
+    height, width = img.shape[:2]
+    if should_scale_rays_to_image:
+        max_x, max_y = get_max_width_height(rays)
+        rays = scale_rays(rays, max_x, max_y, new_max_x=width-1, new_max_y=height-1)
+
+    nrays = len(rays)
+    if individual_ray_outpout:
+        if as_channels:
+            img = np.repeat(img[..., None], nrays, axis=-1)
+            # img_shape += (nrays, )
+            # img = np.full(shape=img_shape, fill_value=dtype(standard_value), dtype=dtype)
+        else:
+            imgs = [np.copy(img) for _ in range(nrays)]
+
+    # draw on image
+    for idx, ray in enumerate(rays):
+        for x1, y1, x2, y2 in ray:
+            start_point = (int(x1), int(y1))
+            end_point = (int(x2), int(y2))
+            
+            if individual_ray_outpout:
+                if as_channels:
+                    layer = np.ascontiguousarray(img[..., idx])
+                    cv2.line(layer, start_point, end_point, ray_value, ray_thickness)
+                    img[..., idx] = layer
+                    # cv2.line(img[..., idx], start_point, end_point, ray_value, ray_thickness)
+                    # if img.ndim == 3:
+                    #     cv2.line(img[:, :, idx], start_point, end_point, ray_value, ray_thickness)
+                    # else:
+                    #     cv2.line(img[:, :, :, idx], start_point, end_point, ray_value, ray_thickness)
+                else:
+                    cv2.line(imgs[idx], start_point, end_point, ray_value, ray_thickness)
+            else:
+                cv2.line(img, start_point, end_point, ray_value, ray_thickness)
+
+
+    if individual_ray_outpout and not as_channels:
+        return imgs
+    else:
+        return img
 
 
 
-def draw_rays(rays):
-    pass
 
+def get_rays(rel_position, img_src, directions_in_degree,
+             rays, individual_ray_outpout=False, as_channels=True, 
+             img_background=None, ray_value=255, ray_thickness=1, 
+             img_shape=(256, 256), dtype=float, standard_value=0,
+             should_scale_rays_to_image=True):
+    rays = trace_beams(rel_position=rel_position, img_src=img_src, directions_in_degree=directions_in_degree)
 
+    img = draw_rays(rays, individual_ray_outpout=individual_ray_outpout, as_channels=as_channels, 
+                    img_background=img_background, ray_value=ray_value, ray_thickness=ray_thickness, 
+                    img_shape=img_shape, dtype=dtype, standard_value=standard_value,
+                    should_scale_rays_to_image=should_scale_rays_to_image)
+    
+    return img
 
 
 
