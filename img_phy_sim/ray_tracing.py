@@ -298,12 +298,13 @@ def calc_reflection(collide_vector, wall_vector):
 
 
 def get_img_border_vector(position, max_width, max_height):
+    # print(f"got {position=}")
     if position[0] < 0:
         return [0, 1]
     elif position[0] >= max_width:
-        return [1, 0]
-    elif position[1] < 0:
         return [0, 1]
+    elif position[1] < 0:
+        return [1, 0]
     elif position[1] >= max_height:
         return [1, 0]
 
@@ -329,6 +330,8 @@ def trace_beam(abs_position,
             current_ray_line = [normalize_point(point=cur_target_abs_position, width=IMG_WIDTH, height=IMG_HEIGHT)]
         else:
             current_ray_line = [(cur_target_abs_position[0], cur_target_abs_position[1])]
+
+        last_abs_position = cur_target_abs_position
 
         # calculate a target line to update the pixels
         #   target vector
@@ -360,7 +363,7 @@ def trace_beam(abs_position,
                     new_direction_in_degree = vector_to_degree(new_direction)
 
                     # start new beam calculation
-                    cur_target_abs_position = current_ray_line[-1]
+                    cur_target_abs_position = last_abs_position
                     cur_direction_in_degree = new_direction_in_degree
                     break
                 else:
@@ -374,10 +377,13 @@ def trace_beam(abs_position,
                     current_ray_line += [normalize_point(point=current_position, width=IMG_WIDTH, height=IMG_HEIGHT)]
                 else:
                     current_ray_line += [(current_position[0], current_position[1])]
+                last_abs_position = (current_position[0], current_position[1])
                 ray += [current_ray_line]
 
                 # get building wall reflection angle
                 building_angle = wall_map[int(current_position[1]), int(current_position[0])]
+                if building_angle == np.inf:
+                    raise Exception("Got inf value from Wall-Map.")
                 wall_vector = degree_to_vector(building_angle)
 
                 # calc new direct vector
@@ -385,7 +391,7 @@ def trace_beam(abs_position,
                 new_direction_in_degree = vector_to_degree(new_direction)
 
                 # start new beam calculation
-                cur_target_abs_position = current_ray_line[-1]
+                cur_target_abs_position = last_abs_position
                 cur_direction_in_degree = new_direction_in_degree
                 break
             else:
@@ -394,6 +400,7 @@ def trace_beam(abs_position,
                     current_ray_line += [normalize_point(point=current_position, width=IMG_WIDTH, height=IMG_HEIGHT)]
                 else:
                     current_ray_line += [(current_position[0], current_position[1])]
+                last_abs_position = (current_position[0], current_position[1])
     
     return ray
 
@@ -456,7 +463,6 @@ def scale_rays(rays,
                 if max_x is not None and max_y is not None:
                     x1 /= max_x
                     y1 /= max_y
-                    raise Exception("CHARLIE")
 
                 from_cache = (x1, y1)
                 if new_max_x is not None and new_max_y is not None:
@@ -467,8 +473,6 @@ def scale_rays(rays,
                     
                     x1 *= new_max_x
                     y1 *= new_max_y
-
-                    print(f"From {from_cache} to {(x1, y1)=}")
 
                 new_beams[idx] = (x1, y1)
 
