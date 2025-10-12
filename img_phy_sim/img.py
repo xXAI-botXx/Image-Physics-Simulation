@@ -19,7 +19,6 @@ def get_bit_depth(img):
     return dtype_to_bits.get(img.dtype.type, "unknown")
 
 
-
 def get_width_height(img, channels_before=0):
     height, width = img.shape[0+channels_before:2+channels_before]
     return width, height
@@ -30,10 +29,8 @@ def open(src, should_scale=True, should_print=True):
     img = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
     height, width = img.shape[:2]
 
-    if should_scale and img.dtype == np.uint8:
-        img = img / 255.0
-    elif should_scale and img.dtype == np.uint16:
-        img = img / 65535.0
+    if should_scale:
+        img = img / ((2**get_bit_depth(img)) -1)
 
     if should_print:
         print(f"Loaded Image:\n    - Image size: {width}x{height}\n    - Bit depth: {get_bit_depth(img)}-bit\n    - Dtype: {img.dtype}")
