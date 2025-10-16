@@ -108,17 +108,61 @@ class PhysGenDataset(Dataset):
         # target_img = resize_tensor_to_divisible_by_14(target_img)
 
         # add fake rgb
-        if input_img.shape[0] == 1:  # shape (B, 1, H, W)
-            input_img = input_img.repeat(3, 1, 1)  # make it (B, 3, H, W)
+        # if input_img.shape[0] == 1:  # shape (B, 1, H, W)
+        #     input_img = input_img.repeat(3, 1, 1)  # make it (B, 3, H, W)
 
         if self.output_type == "complex_only":
-            base_simulation_img = resize_tensor_to_divisible_by_14(self.transform(self.basesimulation_dataset[idx]["soundmap"]))
+            base_simulation_img = self.transform(self.basesimulation_dataset[idx]["soundmap"])
+            # base_simulation_img = resize_tensor_to_divisible_by_14(self.transform(self.basesimulation_dataset[idx]["soundmap"]))
             # target_img = torch.abs(target_img[0] - base_simulation_img[0])
             target_img = target_img[0] - base_simulation_img[0]
             target_img = target_img.unsqueeze(0)
             target_img *= -1
 
         return input_img, target_img, idx
+
+
+
+def get_dataloader(mode='train', variation="sound_reflection", input_type="osm", output_type="complex_only", shuffle=True):
+    dataset = PhysGenDataset(mode=mode, variation=variation, input_type=input_type, output_type=output_type)
+    return DataLoader(dataset, batch_size=1, shuffle=shuffle, num_workers=1)
+
+
+
+def get_image(mode='train', variation="sound_reflection", input_type="osm", output_type="complex_only", shuffle=True, 
+              return_output=False, as_numpy_array=True):
+    dataset = PhysGenDataset(mode=mode, variation=variation, input_type=input_type, output_type=output_type)
+    loader = DataLoader(dataset, batch_size=1, shuffle=shuffle, num_workers=1)
+    cur_data = next(iter(loader))
+    input_ = cur_data[0]
+    output_ = cur_data[1]
+
+    if as_numpy_array:
+        input_ = input_.detach().cpu().numpy()
+        output_ = output_.detach().cpu().numpy()
+
+        # remove batch channel
+        input_ = np.squeeze(input_, axis=0)
+        output_ = np.squeeze(output_, axis=0)
+
+        if len(input_.shape) == 3:
+            input_ = np.squeeze(input_, axis=0)
+            output_ = np.squeeze(output_, axis=0)
+
+        # opencv format
+        # if np.issubdtype(img.dtype, np.floating):
+        #     img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+        #     img = (img * 255).astype(np.uint8)
+        input_ = np.transpose(input_, (1, 0))
+        output_ = np.transpose(output_, (1, 0))
+
+
+    result = input_
+    if return_output:
+        result = [input_, output_]
+
+    return result
+
 
 
 def save_dataset(output_real_path, output_osm_path, 

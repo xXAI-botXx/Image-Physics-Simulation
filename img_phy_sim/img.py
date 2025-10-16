@@ -39,6 +39,14 @@ def open(src, should_scale=True, should_print=True):
 
 
 
+def save(img, src, should_scale=False):
+    if should_scale:
+        img = img / ((2**get_bit_depth(img)) -1)
+
+    cv2.imwrite(src, img)
+
+
+
 def imshow(img, size=8, axis_off=True):
     height, width = img.shape[:2]
     ratio = height / width
