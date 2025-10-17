@@ -17,8 +17,9 @@ Direction is given in Degree, where 0 degree is the right (east) direction. Ther
 
 Start Positions are given by (relative width position, relative height position)
 """
-from img_phy_sim.img import open, get_width_height
+from img_phy_sim.img import open as img_open, get_width_height
 
+import builtins
 import math
 import copy
 
@@ -40,6 +41,10 @@ def print_rays_info(rays):
     npoints = 0
     npoints_per_beam_point = []
     values_per_point = []
+    min_x_value = None
+    max_x_value = None
+    min_y_value = None
+    max_y_value = None
     for ray in rays:
         nrays += 1
         cur_beams = 0
@@ -54,6 +59,10 @@ def print_rays_info(rays):
                 npoints += 1
                 cur_points += 1
                 values_per_point += [len(x)]
+                min_x_value = x[0] if min_x_value is None else min(min_x_value, x[0])
+                max_x_value = x[0] if max_x_value is None else max(max_x_value, x[0])
+                min_y_value = x[1] if min_y_value is None else min(min_y_value, x[1])
+                max_y_value = x[1] if max_y_value is None else max(max_y_value, x[1])
             npoints_per_beam_point += [cur_points]
         nreflexions -= 1
         cur_reflexions -= 1
@@ -82,6 +91,8 @@ def print_rays_info(rays):
     print(f"    - Mean Point Values: {round(np.mean(values_per_point), 1)}")
     print(f"        - Median: {round(np.median(values_per_point), 1)}")
     print(f"        - Variance: {round(np.std(values_per_point), 1)}")
+    print(f"\nValue-Range:\n  x ∈ [{min_x_value:.2f}, {max_x_value:.2f}]\n  y ∈ [{min_y_value:.2f}, {max_y_value:.2f}]")
+    # [ inclusive, ( number is not included
 
     if nrays > 0:
         print(f"\nExample:\nRay 1, beams: {len(rays[0])}")
@@ -92,10 +103,64 @@ def print_rays_info(rays):
 
 
 
+def save(path, rays):
+    # transform rays into an string
+    rays_str = ""
+    for ray in rays:
+        rays_str += ">\n"
+        for beam in ray:
+           rays_str += "\n"
+           for cur_point in beam:
+               rays_str += f"{cur_point[0]} | {cur_point[1]}, " 
+        rays_str += "<\n"
 
-def get_linear_degree_range(step_size=10, offset=0):
-    degree_range = list(range(0, 360, step_size))
-    return list(map(lambda x: x+offset, degree_range))
+    rays_str = rays_str.replace("\n\n", "\n")
+
+    if not path.endswith(".txt"):
+        path += ".txt"
+    
+    with builtins.open(path, "w") as file_:
+        file_.write(rays_str)
+
+def open(path) -> list:
+    if not path.endswith(".txt"):
+        path += ".txt"
+
+    with builtins.open(path, "r") as file_:
+        content = file_.read().strip()
+
+    rays = []
+    for ray in content.split(">"):
+        extracted_ray = []
+        for beam in ray.split("\n"):
+            extracted_beam = []
+            beam = beam.strip()
+            if not beam or beam == "<":
+                continue
+
+            for point in beam.split(","):
+                point = point.strip()
+                if not point or point == "<":
+                    continue
+
+                try:
+                    point_x, point_y = point.strip().split("|")
+                except Exception as e:
+                    print("Point of error:", point)
+                    raise e
+
+                extracted_beam += [(float(point_x), float(point_y))]
+            if len(extracted_beam) > 0:
+                extracted_ray += [extracted_beam]
+        if len(extracted_ray) > 0:
+            rays += [extracted_ray]
+    return rays
+
+
+
+def get_linear_degree_range(start=0, stop=360, step_size=10, offset=0):
+    degree_range = np.arange(start=0, stop=360, step=step_size).tolist() # list(range(0, 360, step_size))
+    return list(map(lambda x: (x+offset) % 360, degree_range))
 
 
 
@@ -312,7 +377,8 @@ def get_img_border_vector(position, max_width, max_height):
 def trace_beam(abs_position, 
                img, 
                direction_in_degree, 
-               wall_map, 
+               wall_map,
+               wall_values, 
                img_border_also_collide=False,
                reflexion_order=3,
                should_scale=True):
@@ -372,11 +438,11 @@ def trace_beam(abs_position,
             next_pixel = img[int(current_position[1]), int(current_position[0])]
 
             # check if hit building
-            if float(next_pixel) == 0.0:
-                if should_scale:
-                    current_ray_line += [normalize_point(point=current_position, width=IMG_WIDTH, height=IMG_HEIGHT)]
-                else:
-                    current_ray_line += [(current_position[0], current_position[1])]
+            if float(next_pixel) in wall_values:
+                # if should_scale:
+                #     current_ray_line += [normalize_point(point=current_position, width=IMG_WIDTH, height=IMG_HEIGHT)]
+                # else:
+                #     current_ray_line += [(current_position[0], current_position[1])]
                 last_abs_position = (current_position[0], current_position[1])
                 ray += [current_ray_line]
 
@@ -415,7 +481,7 @@ def trace_beams(rel_position,
                 reflexion_order=3,
                 should_scale_rays=True,
                 should_scale_img=True):
-    img = open(src=img_src, should_scale=should_scale_img, should_print=False)
+    img = img_open(src=img_src, should_scale=should_scale_img, should_print=False)
     IMG_WIDTH, IMG_HEIGHT =  get_width_height(img)
     abs_position = (rel_position[0] * IMG_WIDTH, rel_position[1] * IMG_HEIGHT)
 
@@ -424,6 +490,9 @@ def trace_beams(rel_position,
     wall_map = get_wall_map(img=img, 
                             wall_values=wall_values, 
                             thickness=wall_thickness)
+    
+    if wall_values is None:
+        wall_values = [0.0]
 
     rays = []
     for direction_in_degree in directions_in_degree:
@@ -432,6 +501,7 @@ def trace_beams(rel_position,
                     img=img,  
                     direction_in_degree=direction_in_degree,
                     wall_map=wall_map,
+                    wall_values=wall_values,
                     img_border_also_collide=img_border_also_collide, 
                     reflexion_order=reflexion_order,
                     should_scale=should_scale_rays
@@ -511,7 +581,8 @@ def draw_rays(rays, detail_draw=True,
               output_format="single_image", # single_image, multiple_images, channels 
               img_background=None, ray_value=255, ray_thickness=1, 
               img_shape=(256, 256), dtype=float, standard_value=0,
-              should_scale_rays_to_image=True, original_max_width=None, original_max_height=None):
+              should_scale_rays_to_image=True, original_max_width=None, original_max_height=None,
+              show_only_reflections=False):
     # prepare background image
     if img_background is None:
         img = np.full(shape=img_shape, fill_value=dtype(standard_value), dtype=dtype)
@@ -532,6 +603,16 @@ def draw_rays(rays, detail_draw=True,
         # img = np.full(shape=img_shape, fill_value=dtype(standard_value), dtype=dtype)
     elif output_format == "multiple_images":
         imgs = [np.copy(img) for _ in range(nrays)]
+
+    # only reflections
+    if show_only_reflections:
+        new_rays = []
+        for ray in rays:
+            if len(ray) <= 1:
+                continue
+
+            new_rays += [ray[1:]]
+        rays = new_rays
 
     # draw on image
     for idx, ray in enumerate(rays):

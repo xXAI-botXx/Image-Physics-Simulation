@@ -2,4 +2,8 @@ datasets
 
 *__pycache__
 
+*cache_*.png
+*raytracing_step*.png
+*my_awesome*.txt
+
 

@@ -47,14 +47,30 @@ def save(img, src, should_scale=False):
 
 
 
-def imshow(img, size=8, axis_off=True):
+def imshow(img, size=8, axis_off=True, cmap="gray"):
+    if cmap == "random":
+        cmap = np.random.choice(["viridis",
+                                 "magma",
+                                 "inferno",
+                                 "plasma",
+                                 "cividis",
+                                 "spring",
+                                 "hot",
+                                 "hsv",
+                                 "CMRmap",
+                                 "gnuplot",
+                                 "gnuplot2",
+                                 "jet",
+                                 "turbo"])
+        cmap = cmap if np.random.random() > 0.5 else cmap+"_r"
+
     height, width = img.shape[:2]
     ratio = height / width
     plt.figure(figsize=(size, round(size * ratio)))
     if img.ndim > 2:
         plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     else:
-        plt.imshow(img, cmap="gray")
+        plt.imshow(img, cmap=cmap)
     plt.axis('off' if axis_off else 'on')
     plt.show()
 
