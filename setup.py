@@ -3,11 +3,11 @@ from setuptools import setup, find_packages
 # relative links to absolute
 with open("./README.md", "r") as f:
     readme = f.read()
-readme = readme.replace('src="./img_phy_sim/raytracing_example.png"', 'src="https://github.com/xXAI-botXx/Image-Physics-Simulation/raw/v_01/raytracing_example.png"')
+readme = readme.replace('src="./img_phy_sim/raytracing_example.png"', 'src="https://github.com/xXAI-botXx/Image-Physics-Simulation/raw/main/img_phy_sim/raytracing_example.png"')
 
 setup(
     name='img-phy-sim',
-    version='0.1',
+    version='0.2',
     packages=['img_phy_sim'],# find_packages(),
     install_requires=[
         # List any dependencies here, e.g. 'numpy', 'requests'
