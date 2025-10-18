@@ -1,3 +1,62 @@
+"""
+**Image Input, Output, and Visualization Utilities**
+
+This module provides a comprehensive set of tools for loading, saving, displaying,
+and analyzing images, particularly for scientific and machine learning workflows.
+It supports grayscale and color images, normalization, inversion, block-wise
+statistics, and flexible visualization options for single or multiple images.
+
+The core idea is to provide an easy interface for inspecting and comparing images,
+generating informative visualizations, and preparing image data for further processing.
+
+Main features:
+- Load and save images with optional normalization
+- Display images with flexible size, colormap, and axis options
+- Compare multiple sets of images (input, prediction, ground truth, difference)
+- Advanced multi-image visualization with custom layouts and titles
+- Annotate images with block-wise mean values for quick inspection
+- Highlight specific rows or columns and plot their pixel profiles
+- Utility functions to get image properties (bit depth, width, height)
+
+Typical workflow:
+1. Load images using `open()` or read multiple paths via `show_images()`.
+2. Visualize single or multiple images using `imshow()` or `advanced_imshow()`.
+3. Compare predictions with ground truth using `show_samples()`.
+4. Annotate blocks or highlight pixel profiles using
+    `plot_image_with_values()` and `show_image_with_line_and_profile()`.
+
+Dependencies:
+- numpy
+- cv2 (OpenCV)
+- matplotlib
+- scikit-image
+
+Example:
+```python
+img = img.open("example.png", should_scale=True)
+img = img * 255  # optional scaling
+img.show()
+show_samples([img], [pred_img], [ground_truth], model_name="MyModel")
+plot_image_with_values(img, block_size=16, cmap="gray")
+line_values = show_image_with_line_and_profile([img], axis="row", index=50)
+```
+
+Author:<br>
+Tobia Ippolito, 2025
+
+Functions:
+- get_bit_depth(img)                   - Return bit depth of image dtype.
+- get_width_height(img, channels_before=0) - Return (width, height) of an image.
+- open(src, should_scale=False, should_print=True) - Load an image from disk.
+- save(img, src, should_scale=False)  - Save an image to disk.
+- imshow(img, size=8, axis_off=True, cmap="gray") - Display an image.
+- show_samples(input_samples, pred_samples, real_samples, ...) - Compare multiple images.
+- advanced_imshow(img, title=None, image_width=10, ...) - Display single or batch images with customization.
+- show_images(image_paths, title=None, image_width=5, ...) - Load and display images from paths.
+- plot_image_with_values(img, block_size=8, ...) - Annotate image with block-wise mean values.
+- show_image_with_line_and_profile(imgs, axis='row', ...) - Highlight a row/column and plot pixel values.
+"""
+
 import os
 import numpy as np
 import cv2
@@ -9,6 +68,24 @@ from skimage.measure import block_reduce  # pip install scikit-image
 # -------------------------
 
 def get_bit_depth(img):
+    """
+    Retrieve the bit depth of an image based on its NumPy data type.
+
+    Parameters:
+        img (numpy.ndarray): Input image array.
+
+    Returns:
+        int or str: Bit depth of the image (8, 16, 32, or 64).
+                    Returns "unknown" if the data type is not recognized.
+
+    Notes:
+        The mapping is defined for common image dtypes:
+            - np.uint8   →  8-bit
+            - np.uint16  → 16-bit
+            - np.int16   → 16-bit
+            - np.float32 → 32-bit
+            - np.float64 → 64-bit
+    """
     dtype_to_bits = {
         np.uint8: 8,
         np.uint16: 16,
@@ -20,12 +97,49 @@ def get_bit_depth(img):
 
 
 def get_width_height(img, channels_before=0):
+    """
+    Extract the width and height of an image, optionally offset by leading channels.
+
+    Parameters:
+        img (numpy.ndarray): Input image array.
+        channels_before (int, optional): Offset in the shape dimension if
+                                         channels precede height and width
+                                         (default: 0).
+
+    Returns:
+        tuple: (width, height) of the image.
+
+    Example:
+        >>> img.shape = (256, 512)
+        >>> get_width_height(img)
+        (512, 256)
+    """
     height, width = img.shape[0+channels_before:2+channels_before]
     return width, height
 
 
 
-def open(src, should_scale=True, should_print=True):
+def open(src, should_scale=False, should_print=True):
+    """
+    Load a grayscale image from a file path.
+
+    Parameters:
+        src (str): Path to the image file.
+        should_scale (bool, optional): If True, scale pixel values to [0, 1]
+                                       according to bit depth (default: False).
+        should_print (bool, optional): If True, print image info to console
+                                       (default: True).
+
+    Returns:
+        numpy.ndarray: Loaded grayscale image.
+
+    Example:
+        >>> img = open("example.png", should_scale=True)
+        Loaded Image:
+            - Image size: 512x256
+            - Bit depth: 8-bit
+            - Dtype: float64
+    """
     img = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
     height, width = img.shape[:2]
 
@@ -40,6 +154,20 @@ def open(src, should_scale=True, should_print=True):
 
 
 def save(img, src, should_scale=False):
+    """
+    Save an image to disk.
+
+    Parameters:
+        img (numpy.ndarray): Image to save.
+        src (str): Destination file path.
+        should_scale (bool, optional): If True, scale pixel values to [0, 1]
+                                       before saving (default: False).
+
+    Notes:
+        - The function uses OpenCV’s `cv2.imwrite` for saving.
+        - The scaling logic divides by the maximum value representable
+          by the bit depth, similar to the `open()` function.
+    """
     if should_scale:
         img = img / ((2**get_bit_depth(img)) -1)
 
@@ -48,6 +176,25 @@ def save(img, src, should_scale=False):
 
 
 def imshow(img, size=8, axis_off=True, cmap="gray"):
+    """
+    Display an image using Matplotlib.
+
+    Parameters:
+        img (numpy.ndarray): Image to display.
+        size (int, optional): Display size in inches (default: 8).
+        axis_off (bool, optional): If True, hides the axes (default: True).
+        cmap (str, optional): Colormap name.
+                              Use 'random' for a random Matplotlib colormap (default: 'gray').
+
+    Behavior:
+        - If `img` has 3 channels, it is converted from BGR to RGB.
+        - If `cmap='random'`, a random colormap is chosen and possibly reversed.
+        - Maintains the aspect ratio based on image dimensions.
+
+    Example:
+        >>> imshow(img, cmap='random')
+        # Displays the image with a randomly selected colormap.
+    """
     if cmap == "random":
         cmap = np.random.choice(["viridis",
                                  "magma",
@@ -86,34 +233,35 @@ def show_samples(input_samples, pred_samples, real_samples, model_name="Model",
                  normalize=True, invert=False, axis=False,
                  save_to=None, hspace=0.3, wspace=0.2, use_original_style=False):
     """
-    General function to plot multiple sets of images: input, prediction, ground truth, difference.
+    Display multiple sets of sample images (input, prediction, ground truth, difference)
+    side by side for visual comparison.
 
-    ---
+    The function can load images from file paths or accept NumPy arrays directly.
+    It arranges them in a grid and can optionally normalize, invert, or save the output.
+
     Parameters:
-    - input_samples, pred_samples, real_samples : list[str] or list[np.ndarray]
-        Lists of file paths or arrays for input images, model predictions, and ground truth.
-    - model_name : str, optional
-        Name of the model to display for prediction column.
-    - n_samples : int, optional
-        Number of samples to plot.
-    - n_cols : int, optional
-        Number of columns in the plot (default 4: input, pred, real, difference).
-    - image_width : int, optional
-        Width of one image in inches.
-    - cmap : str, optional
-        Colormap to use for displaying images.
-    - normalize : bool, optional
-        Whether to normalize images to [0,1].
-    - invert : bool, optional
-        Whether to invert images (255 - image).
-    - axis : bool, optional
-        Whether to show axes.
-    - save_to : str, optional
-        Path to save the figure.
-    - hspace, wspace : float, optional
-        Spacing between images.
-    - use_original_style : bool, optional
-        Whether to use the current matplotlib style.
+        input_samples (list[str] or list[np.ndarray]): Input sample images.
+        pred_samples (list[str] or list[np.ndarray]): Model prediction images.
+        real_samples (list[str] or list[np.ndarray]): Ground truth images.
+        model_name (str, optional): Name of the model to display in titles (default: "Model").
+        n_samples (int, optional): Number of sample groups to display (default: 3).
+        n_cols (int, optional): Number of columns per sample group (default: 4).
+                                Typically: Input | Prediction | Ground Truth | Difference.
+        image_width (int, optional): Width of one image in inches (default: 4).
+        cmap (str, optional): Colormap for displaying grayscale images (default: "gray").
+        normalize (bool, optional): Whether to normalize pixel values to [0, 1] (default: True).
+        invert (bool, optional): Whether to invert pixel values (255 - img) (default: False).
+        axis (bool, optional): Whether to show image axes (default: False).
+        save_to (str, optional): Path to save the figure (default: None).
+        hspace (float, optional): Vertical spacing between subplots (default: 0.3).
+        wspace (float, optional): Horizontal spacing between subplots (default: 0.2).
+        use_original_style (bool, optional): If True, preserves the current matplotlib style (default: False).
+
+    Returns:
+        None
+
+    Example:
+        >>> show_samples(inputs, preds, reals, model_name="UNet", n_samples=5, cmap="gray")
     """
     
     def load_image(img):
@@ -183,34 +331,32 @@ def advanced_imshow(img, title=None, image_width=10, axis=False,
            hspace=0.2, wspace=0.2,
            use_original_style=False, invert=False):
     """
-    Visualizes one or multiple images.
+    Display one or multiple images in a flexible and configurable grid.
 
-    Image will be reshaped to: [batch_size/images, width, height, channels]
+    This function supports multiple color spaces, automatic reshaping of 
+    input tensors, batch display, color inversion, and saving to disk.
 
-    ---
     Parameters:
-    - img : np.ndarray
-        Images with shape [width, height, channels] or [batch_size, width, height, channels].
-    - title : str or list, optional
-        Title of the whole plot or per-image titles.
-    - image_width : int, optional
-        Width of one image in the plot.
-    - axis : bool, optional
-        Whether to show the axis.
-    - color_space : str, optional
-        The colorspace of the image: RGB, BGR, gray, HSV.
-    - cmap : str, optional
-        Colormap to use.
-    - cols : int, optional
-        Number of columns in the plot.
-    - save_to : str, optional
-        Path to save the figure.
-    - hspace, wspace : float, optional
-        Spacing between images.
-    - use_original_style : bool, optional
-        Whether to keep the current matplotlib style.
-    - invert : bool, optional
-        Whether to invert image colors.
+        img (np.ndarray): Input image or batch of images.
+                          Accepted shapes:
+                              [H, W], [H, W, C], [N, H, W], or [N, H, W, C].
+        title (str or list[str], optional): Overall or per-image titles.
+        image_width (int, optional): Width of each image in inches (default: 10).
+        axis (bool, optional): Whether to show axes (default: False).
+        color_space (str, optional): Color space of the image: "RGB", "BGR", "gray", or "HSV" (default: "RGB").
+        cmap (str, optional): Matplotlib colormap for grayscale images (default: None).
+        cols (int, optional): Number of columns in the subplot grid (default: 1).
+        save_to (str, optional): File path to save the figure (default: None).
+        hspace (float, optional): Vertical spacing between subplots (default: 0.2).
+        wspace (float, optional): Horizontal spacing between subplots (default: 0.2).
+        use_original_style (bool, optional): Keep current Matplotlib style if True (default: False).
+        invert (bool, optional): Invert color values (default: False).
+
+    Returns:
+        None
+
+    Example:
+        >>> advanced_imshow(batch_images, cols=3, color_space="BGR", title="Predictions")
     """
     original_style = plt.rcParams.copy()
     try:
@@ -292,7 +438,28 @@ def show_images(image_paths: list, title=None, image_width=5, axis=False,
                 cols=2, save_to=None, hspace=0.01, wspace=0.01,
                 use_original_style=False, invert=False):
     """
-    Loads images from paths and visualizes them using `advanced_imshow`.
+    Load and display multiple images from disk using `advanced_imshow`.
+
+    Parameters:
+        image_paths (list[str]): List of file paths to load.
+        title (str or list[str], optional): Plot title(s).
+        image_width (int, optional): Width of each image (default: 5).
+        axis (bool, optional): Whether to display axes (default: False).
+        color_space (str, optional): Color space to convert images to.
+                                     One of: "gray", "rgb", "hsv", "bgr" (default: "gray").
+        cmap (str, optional): Colormap for grayscale images (default: None).
+        cols (int, optional): Number of columns in the grid (default: 2).
+        save_to (str, optional): Path to save the figure (default: None).
+        hspace (float, optional): Vertical spacing between subplots (default: 0.01).
+        wspace (float, optional): Horizontal spacing between subplots (default: 0.01).
+        use_original_style (bool, optional): Keep current Matplotlib style (default: False).
+        invert (bool, optional): Whether to invert images (default: False).
+
+    Returns:
+        np.ndarray: Loaded images stacked as an array.
+
+    Example:
+        >>> show_images(["img1.png", "img2.png"], color_space="rgb", cols=2)
     """
     images = []
     for img_path in image_paths:
@@ -317,52 +484,50 @@ def show_images(image_paths: list, title=None, image_width=5, axis=False,
 def plot_image_with_values(img, block_size=8, cmap='gray', title=None, 
                            font_size=6, save_to=None):
     """
-    Plot an image with mean values computed over non-overlapping blocks, annotated on each block.
+    Plot an image with annotated mean values over non-overlapping blocks.
 
-    Parameters
-    ----------
-    img : np.ndarray
-        2D grayscale image or 3D single-channel image.
-    block_size : int, tuple, optional
-        Size of the blocks. If int, square blocks of shape (block_size, block_size) are used.
-        Default is 8.
-    cmap : str, optional
-        Colormap to use for plotting. Default is 'gray'.
-    title : str, optional
-        Title for the plot.
-    font_size : int, optional
-        Font size for the annotations. Default is 6.
-    save_to : str, optional
-        Path to save the figure. If None, figure is not saved.
+    Each block represents the mean pixel intensity of its region. The mean
+    values are displayed as text annotations directly on the image.
 
-    Example Usage:
-    ```python
-    from imshow import plot_image_with_values
-    import cv2
+    Parameters:
+        img (np.ndarray): 2D grayscale image (H, W) or 3D single-channel image (H, W, 1).
+        block_size (int or tuple, optional): Size of each block (default: 8).
+        cmap (str, optional): Matplotlib colormap (default: "gray").
+        title (str, optional): Plot title (default: None).
+        font_size (int, optional): Font size of value annotations (default: 6).
+        save_to (str, optional): Path to save the figure (default: None).
 
-    img = cv2.imread('example.png', cv2.IMREAD_GRAYSCALE)
-    plot_image_with_values(img, block_size=16, cmap='gray', title='Mean Block Values', font_size=8)
-    ```
+    Returns:
+        None
 
-    Or:
-    ```python
-    fig, ax = plt.subplots(nrows=2, ncols=4, figsize=(4*4, 6))
-    idx = 0
+    Example:
+        ```python
+        from imshow import plot_image_with_values
+        import cv2
 
-    img_1 = plot(ax[0][0], path=input_samples[idx], title=f"Input", cmap="gray")
-    plot_image_with_values(img_1, block_size=16, ax=ax[1][0])
+        img = cv2.imread('example.png', cv2.IMREAD_GRAYSCALE)
+        plot_image_with_values(img, block_size=16, cmap='gray', title='Mean Block Values', font_size=8)
+        ```
 
-    img_2 = plot(ax[0][1], path=pred_model[idx], title=f"{model_name}")
-    plot_image_with_values(img_2, block_size=16, ax=ax[1][1])
+        Or:
+        ```python
+        fig, ax = plt.subplots(nrows=2, ncols=4, figsize=(4*4, 6))
+        idx = 0
 
-    img_3 = plot(ax[0][2], path=real[idx], title=f"ground truth")
-    plot_image_with_values(img_3, block_size=16, ax=ax[1][2])
+        img_1 = plot(ax[0][0], path=input_samples[idx], title=f"Input", cmap="gray")
+        plot_image_with_values(img_1, block_size=16, ax=ax[1][0])
 
-    img_4 = plot(ax[0][3], path=pred_model[idx], title=f"Difference", sub_image=real[idx])
-    plot_image_with_values(img_4, block_size=16, ax=ax[1][3])
+        img_2 = plot(ax[0][1], path=pred_model[idx], title=f"{model_name}")
+        plot_image_with_values(img_2, block_size=16, ax=ax[1][1])
 
-    plt.show()
-    ```
+        img_3 = plot(ax[0][2], path=real[idx], title=f"ground truth")
+        plot_image_with_values(img_3, block_size=16, ax=ax[1][2])
+
+        img_4 = plot(ax[0][3], path=pred_model[idx], title=f"Difference", sub_image=real[idx])
+        plot_image_with_values(img_4, block_size=16, ax=ax[1][3])
+
+        plt.show()
+        ```
     """
     # Ensure 2D image
     if img.ndim == 3 and img.shape[2] == 1:
@@ -400,35 +565,25 @@ def plot_image_with_values(img, block_size=8, cmap='gray', title=None,
     
 def show_image_with_line_and_profile(imgs, axis='row', index=None, titles=None, figsize=(10, 4)):
     """
-    Show grayscale images with a selected row or column highlighted,
-    and plot its pixel values in a second subplot for each image.
+    Display one or multiple grayscale images with a highlighted line (row or column)
+    and plot the corresponding pixel intensity profile below or beside each image.
 
-    Parameters
-    ----------
-    imgs : list of np.ndarray
-        List of 2D grayscale images.
-    axis : str, optional
-        'row' or 'column' to extract the line. Default 'row'.
-    index : int, optional
-        Index of the row or column to highlight. Defaults to the center.
-    titles : list of str, optional
-        Titles for each image. Default ["Image 1", "Image 2", ...].
-    figsize : tuple, optional
-        Figure size per image pair (original + profile).
-    Returns
-    -------
-    line_values_list : list of np.ndarray
-        List of pixel values along the selected row/column for each image.
+    Parameters:
+        imgs (list[np.ndarray]): List of grayscale images to analyze.
+        axis (str, optional): Direction of the line ("row" or "column") (default: "row").
+        index (int, optional): Index of the selected line. If None, the central line is used (default: None).
+        titles (list[str], optional): Titles for each image (default: ["Image 1", "Image 2", ...]).
+        figsize (tuple, optional): Figure size per image pair (default: (10, 4)).
 
-    Example Usage:
-    ```python
-    line_values = show_image_with_line_and_profile(
-        imgs=[img_1, img_2, img_3, img_4], 
-        axis='row', 
-        index=None, 
-        titles=['Input', 'Prediction', 'Ground Truth', 'Difference']
-    )
-    ```
+    Returns:
+        list[np.ndarray]: List of pixel intensity profiles corresponding to the selected line in each image.
+
+    Example:
+        >>> show_image_with_line_and_profile(
+        ...     imgs=[img_input, img_pred, img_gt],
+        ...     axis="row",
+        ...     titles=["Input", "Prediction", "Ground Truth"]
+        ... )
     """
     assert axis in ['row', 'column'], "axis must be 'row' or 'column'"
 

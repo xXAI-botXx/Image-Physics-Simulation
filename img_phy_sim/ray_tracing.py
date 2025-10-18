@@ -1,23 +1,69 @@
 """
-Definitions:
+**Beam Tracing and Visualization Utilities**
 
-Rays:
-[
-    [[x1, x2, y1, y2], [x1, x2, y1, y2], [x1, x2, y1, y2]],  # Ray 1
-    [[x1, x2, y1, y2]]  # Ray 2
-]
+This module provides a set of tools for simulating and visualizing the propagation
+of rays (beams) through 2D images that may contain reflective or obstructive walls.
+It includes methods for tracing ray paths, handling reflections, scaling and
+normalizing ray coordinates, and drawing the resulting beam paths onto images.
 
-Direction is given in Degree, where 0 degree is the right (east) direction. Therefore:
-- 0° east
-- 90° south
-- 180° west
-- 270° north
+The core idea is to represent a 2D environment as an image where certain pixel
+values correspond to walls or obstacles. Rays are emitted from a relative position
+and traced in specified directions, optionally reflecting off walls multiple times.
+The results can then be visualized or further processed.
 
-=> [0, 360)
+Main features:
+- Ray tracing with customizable reflection order and wall detection
+- Support for relative and absolute coordinate systems
+- Ray scaling utilities for normalization or resizing
+- Image rendering functions to visualize rays, walls, and reflection paths
+- Flexible output modes: single image, multi-channel, or multiple separate images
 
-Start Positions are given by (relative width position, relative height position)
+Typical workflow:
+1. Use `trace_beams()` to simulate multiple beams across an image.
+2. Render the rays on an image using `draw_rays()`.
+
+Dependencies:
+- numpy
+- cv2 (OpenCV)
+- internal math + img modules
+
+Example:
+```python
+img = ips.img.open("scene.png")
+rays = ips.ray_tracing.trace_beams(
+    rel_position=(0.5, 0.5),
+    img_src=img,
+    directions_in_degree=[0, 45, 90, 135],
+    wall_values=[0],
+    wall_thickness=2,
+    reflexion_order=2
+)
+output = ips.ray_tracing.draw_rays(rays, img_shape=img.shape, ray_value=255, ray_thickness=1)
+ips.img.imshow(output, size=5)
+```
+
+Author:<br>
+Tobia Ippolito, 2025
+
+Functions:
+- print_rays_info(...)  - Pritn informations about created rays.
+- save(...)  - Save rays into a file.
+- open(...)  - Load saved rays.
+- merge(...)  - Merge 2 or more rays together.
+- get_all_pixel_coordinates_in_between(...)  - Use brahams algorithm for getting any line in a quantizied space.
+- get_wall_map(...)  - Extract edges and get the wall-map with direction angles of walls. 
+- update_pixel_position(...)  - Get the next pixel to come from one point to another in a quantizied system.
+- calc_reflection(...)  - Calculate the reflexion of 2 vectors.
+- get_img_border_vector(...)  - Get the vector of a border of the image.
+- trace_beam(...)  - Trace a single beam with reflexions.
+- trace_beams(...)  - Trace multiple beams with reflections through an image.
+- scale_rays(...)   - Normalize or rescale ray coordinates.
+- draw_rectangle_with_thickness(...) - Draw filled or thick rectangles.
+- draw_line_or_point(...) - Draw a single point or a line segment.
+- draw_rays(...)    - Visualize traced rays as images or channels.
 """
 from img_phy_sim.img import open as img_open, get_width_height
+from img_phy_sim.math import degree_to_vector, vector_to_degree, normalize_point
 
 import builtins
 import math
@@ -33,6 +79,22 @@ import cv2
 # --------------
 
 def print_rays_info(rays):
+    """
+    Print statistical information about a collection of rays.
+
+    Each ray consists of multiple beams, and each beam consists of multiple points.
+    The function computes and displays statistics such as:
+    - Number of rays, beams, reflexions, and points
+    - Mean, median, max, min, and variance for beams per ray, reflexions per ray, and points per beam
+    - Value range for x and y coordinates
+
+    Parameters:
+        rays (list): Nested list structure representing rays.
+                     Format: rays[ray][beam][point] = (x, y)
+
+    Returns:
+        None
+    """
     nrays = 0
     nbeams = 0
     nbeams_per_ray = []
@@ -100,10 +162,26 @@ def print_rays_info(rays):
             print(f"Ray 1, beam 1, points: {len(rays[0][0])}")
             if npoints > 0:
                 print(f"Ray 1, beam 1, point 1: {len(rays[0][0][0])}")
+    print("\n")
 
 
 
 def save(path, rays):
+    """
+    Save a list of rays to a text file.
+
+    The rays are serialized using a simple text-based format.
+    Each ray is delimited by '>' and '<', and each point is represented as "x | y".
+
+    Parameters:
+        path (str): Path to the file where data should be saved.
+                    If no '.txt' extension is present, it will be appended automatically.
+        rays (list): Nested list structure representing rays.
+                     Format: rays[ray][beam][point] = (x, y)
+
+    Returns:
+        None
+    """
     # transform rays into an string
     rays_str = ""
     for ray in rays:
@@ -122,7 +200,21 @@ def save(path, rays):
     with builtins.open(path, "w") as file_:
         file_.write(rays_str)
 
+
+
 def open(path) -> list:
+    """
+    Open and parse a ray text file into a structured list.
+
+    The file is expected to follow the same format as produced by `save()`.
+
+    Parameters:
+        path (str): Path to the .txt file containing ray data.
+
+    Returns:
+        list: Nested list structure representing rays.
+              Format: rays[ray][beam][point] = (x, y)
+    """
     if not path.endswith(".txt"):
         path += ".txt"
 
@@ -158,34 +250,22 @@ def open(path) -> list:
 
 
 
-def get_linear_degree_range(start=0, stop=360, step_size=10, offset=0):
-    degree_range = np.arange(start=0, stop=360, step=step_size).tolist() # list(range(0, 360, step_size))
-    return list(map(lambda x: (x+offset) % 360, degree_range))
+def merge(rays_1, rays_2, *other_rays_):
+    """
+    Merge multiple ray datasets into a single list.
 
+    Parameters:
+        rays_1 (list): First set of rays.
+        rays_2 (list): Second set of rays.
+        *other_rays_ (list): Additional ray lists to merge.
 
-
-def degree_to_vector(degree):
-    rad = math.radians(degree)
-    return [math.cos(rad), math.sin(rad)]
-
-
-
-
-def vector_to_degree(vector):
-    x, y = vector
-    degree = math.degrees(math.atan2(y, x))  # atan2 returns angles between -180° and 180°
-    return int( degree % 360 ) 
-
-
-
-def normalize_point(point, width, height):
-    return (point[0] / (width - 1), point[1] / (height - 1))
-
-
-
-
-def denormalize_point(point, width, height):
-    return (point[0] * (width - 1), point[1] * (height - 1))
+    Returns:
+        list: Combined list of all rays.
+    """
+    merged = rays_1 + rays_2
+    for rays in other_rays_:
+        merged += rays
+    return merged
 
 
 
@@ -193,28 +273,49 @@ def denormalize_point(point, width, height):
 # ----------------------
 # >>> Core Functions <<<
 # ----------------------
-def get_walls(img):
-    # detect edges and contours
-    edges = cv2.Canny((img*255).astype(np.uint8), 100, 200)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+# def get_walls(img):
+#     """
+#     Detect walls (edges) in an image and convert them into line segments.
 
-    # convert contours to line segments
-    walls = []
-    for c in contours:
-        for i in range(len(c)-1):
-            x1, y1 = c[i][0]
-            x2, y2 = c[i+1][0]
-            walls += [[x1, y1, x2, y2]]
-    return walls
+#     The function uses the Canny edge detector to find edges, then extracts contours
+#     and converts each contour into a list of line segments represented as (x1, y1, x2, y2).
+
+#     Parameters:
+#         img (numpy.ndarray): Input image as a grayscale or binary image. 
+#                              Values should be in range [0, 1] or [0, 255].
+
+#     Returns:
+#         list: List of wall segments, each represented as [x1, y1, x2, y2].
+#     """
+#     # detect edges and contours
+#     edges = cv2.Canny((img*255).astype(np.uint8), 100, 200)
+#     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+#     # convert contours to line segments
+#     walls = []
+#     for c in contours:
+#         for i in range(len(c)-1):
+#             x1, y1 = c[i][0]
+#             x2, y2 = c[i+1][0]
+#             walls += [[x1, y1, x2, y2]]
+#     return walls
 
 
 
 def get_all_pixel_coordinates_in_between(x1, y1, x2, y2):
     """
-    Returns a list of all pixel coordinates (x, y) between (x1, y1) and (x2, y2)
-    using Bresenham's line algorithm.
+    Get all pixel coordinates along a line between two points using Bresenham’s algorithm.
 
     https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
+
+    Parameters:
+        x1 (int): Starting x-coordinate.
+        y1 (int): Starting y-coordinate.
+        x2 (int): Ending x-coordinate.
+        y2 (int): Ending y-coordinate.
+
+    Returns:
+        list: List of (x, y) tuples representing all pixels between the start and end points
     """
     coordinates = []
 
@@ -250,6 +351,20 @@ def get_all_pixel_coordinates_in_between(x1, y1, x2, y2):
 
 
 def get_wall_map(img, wall_values=None, thickness=1):
+    """
+    Generate a wall map where each pixel encodes the wall orientation (in degrees).
+
+    Parameters:
+        img (numpy.ndarray): Input image representing scene or segmentation mask.
+        wall_values (list, optional): Specific pixel values considered as walls.
+                                      If None, all non-zero pixels are treated as walls.
+        thickness (int, optional): Thickness of wall lines (default is 1).
+
+    Returns:
+        numpy.ndarray: 2D array (same width and height as input) where each wall pixel
+                       contains the wall angle in degrees (0–360), and non-wall pixels
+                       are set to infinity (np.inf).
+    """
     IMG_WIDTH, IMG_HEIGHT =  get_width_height(img)
     wall_map = np.full((IMG_HEIGHT, IMG_WIDTH), np.inf, dtype=np.uint16)  # uint16 to get at least 360 degree/value range
 
@@ -285,17 +400,22 @@ def get_wall_map(img, wall_values=None, thickness=1):
     return wall_map
 
 
-# def point_line_distance(point, line_start, line_end):
-#     x0, y0 = point
-#     x1, y1 = line_start
-#     x2, y2 = line_end
-#     num = abs((x2 - x1)*(y1 - y0) - (x1 - x0)*(y2 - y1))
-#     den = np.hypot(x2 - x1, y2 - y1)
-#     return num / den
-
-
 
 def update_pixel_position(direction_in_degree, cur_position, target_line):
+    """
+    Update the pixel position of a moving point toward a target line based on direction and proximity.
+
+    Combines the direction vector with a vector pointing toward the closest point
+    on the target line, ensuring pixel-wise movement (discrete steps).
+
+    Parameters:
+        direction_in_degree (float): Movement direction in degrees.
+        cur_position (tuple): Current pixel position (x, y).
+        target_line (list): Target line defined as [x1, y1, x2, y2].
+
+    Returns:
+        tuple: Updated pixel position (x, y).
+    """
     # 1. Calc distance from point to target line
 
     # perpendicular vector to line (points toward line)
@@ -340,6 +460,19 @@ def update_pixel_position(direction_in_degree, cur_position, target_line):
 
 
 def calc_reflection(collide_vector, wall_vector):
+    """
+    Calculate the reflection of a collision vector against a wall vector.
+
+    The reflection is computed using the wall's normal vector and the formula:
+        r = v - 2 * (v · n) * n
+
+    Parameters:
+        collide_vector (array-like): Incoming vector (2D).
+        wall_vector (array-like): Wall direction vector (2D).
+
+    Returns:
+        numpy.ndarray: Reflected 2D vector.
+    """
     # normalize both
     collide_vector = np.array(collide_vector, dtype=float)
     collide_vector /= np.linalg.norm(collide_vector)
@@ -363,6 +496,17 @@ def calc_reflection(collide_vector, wall_vector):
 
 
 def get_img_border_vector(position, max_width, max_height):
+    """
+    Determine the wall normal vector for an image border collision.
+
+    Parameters:
+        position (tuple): Current position (x, y).
+        max_width (int): Image width.
+        max_height (int): Image height.
+
+    Returns:
+        list: Border wall vector corresponding to the collision side.
+    """
     # print(f"got {position=}")
     if position[0] < 0:
         return [0, 1]
@@ -382,6 +526,26 @@ def trace_beam(abs_position,
                img_border_also_collide=False,
                reflexion_order=3,
                should_scale=True):
+    """
+    Trace a ray (beam) through an image with walls and reflections.
+
+    The beam starts from a given position and follows a direction until it hits
+    a wall or border. On collisions, reflections are computed using wall normals.
+
+    Parameters:
+        abs_position (tuple): Starting position (x, y) of the beam.
+        img (numpy.ndarray): Input image or segmentation map.
+        direction_in_degree (float): Initial direction angle of the beam.
+        wall_map (numpy.ndarray): Map containing wall orientations in degrees.
+        wall_values (list): List of pixel values representing walls.
+        img_border_also_collide (bool, optional): Whether the image border acts as a collider (default: False).
+        reflexion_order (int, optional): Number of allowed reflections (default: 3).
+        should_scale (bool, optional): Whether to normalize positions to [0, 1] (default: True).
+
+    Returns:
+        list: Nested list structure representing the traced ray and its reflections.
+              Format: ray[beam][point] = (x, y)
+    """
     reflexion_order += 1  # Reflexion Order == 0 means, no reflections, therefore only 1 loop
     IMG_WIDTH, IMG_HEIGHT =  get_width_height(img)
 
@@ -481,7 +645,32 @@ def trace_beams(rel_position,
                 reflexion_order=3,
                 should_scale_rays=True,
                 should_scale_img=True):
-    img = img_open(src=img_src, should_scale=should_scale_img, should_print=False)
+    """
+    Trace multiple rays (beams) from a single position through an image with walls and reflections.
+
+    Each beam starts from a given relative position and follows its assigned direction
+    until it collides with a wall or image border. On collisions, reflections are
+    computed based on local wall normals extracted from the image.
+
+    Parameters:
+        rel_position (tuple): Relative starting position (x, y) in normalized coordinates [0-1].
+        img_src (str or numpy.ndarray): Input image (array or file path) used for wall detection.
+        directions_in_degree (list): List of beam direction angles (in degrees).
+        wall_values (list or float or None): Pixel values representing walls or obstacles.
+        wall_thickness (int, optional): Thickness (in pixels) of detected walls (default: 0).
+        img_border_also_collide (bool, optional): Whether image borders act as colliders (default: False).
+        reflexion_order (int, optional): Number of allowed reflections per beam (default: 3).
+        should_scale_rays (bool, optional): Whether to normalize ray coordinates to [0, 1] (default: True).
+        should_scale_img (bool, optional): Whether to scale the input image before wall detection (default: True).
+
+    Returns:
+        list: Nested list of traced beams and their reflection segments.
+              Format: rays[beam][segment][point] = (x, y)
+    """ 
+    if type(img_src) == np.ndarray:
+        img = img_src
+    else:
+        img = img_open(src=img_src, should_scale=should_scale_img, should_print=False)
     IMG_WIDTH, IMG_HEIGHT =  get_width_height(img)
     abs_position = (rel_position[0] * IMG_WIDTH, rel_position[1] * IMG_HEIGHT)
 
@@ -516,7 +705,23 @@ def scale_rays(rays,
                max_x=None, max_y=None, 
                new_max_x=None, new_max_y=None,
                detailed_scaling=True):
+    """
+    Scale ray coordinates between coordinate systems or image resolutions.
 
+    Optionally normalizes rays by old dimensions and rescales them to new ones.
+    Can scale all points or just the start/end points of each beam.
+
+    Parameters:
+        rays (list): Nested list of rays in the format rays[ray][beam][point] = (x, y).
+        max_x (float, optional): Original maximum x-value for normalization.
+        max_y (float, optional): Original maximum y-value for normalization.
+        new_max_x (float, optional): New maximum x-value after rescaling.
+        new_max_y (float, optional): New maximum y-value after rescaling.
+        detailed_scaling (bool, optional): If True, scale every point in a beam; otherwise, only endpoints (default: True).
+
+    Returns:
+        list: Scaled rays in the same nested format.
+    """
     scaled_rays = []
     for ray in rays:
         scaled_ray = []
@@ -550,7 +755,26 @@ def scale_rays(rays,
         scaled_rays += [scaled_ray]
     return scaled_rays
 
+
+
 def draw_rectangle_with_thickness(img, start_point, end_point, value, thickness=1):
+    """
+    Draw a filled or thick rectangle on an image.
+
+    Expands the given start and end points based on the desired thickness and
+    clips coordinates to image bounds to avoid overflow.
+
+    Parameters:
+        img (numpy.ndarray): Image array to draw on.
+        start_point (tuple): Top-left corner of the rectangle (x, y).
+        end_point (tuple): Bottom-right corner of the rectangle (x, y).
+        value (int or float): Fill value or color intensity.
+        thickness (int, optional): Rectangle border thickness; 
+                                   if <= 0, the rectangle is filled (default: 1).
+
+    Returns:
+        None
+    """
     # Calculate the expansion -> "thickness"
     if thickness > 0:
         expand = thickness // 2
@@ -570,6 +794,22 @@ def draw_rectangle_with_thickness(img, start_point, end_point, value, thickness=
     cv2.rectangle(img, (x1, y1), (x2, y2), value, thickness=-1)
 
 def draw_line_or_point(img, start_point, end_point, fill_value, thickness):
+    """
+    Draw either a line or a single point on an image.
+
+    Determines whether to draw a point or a line based on whether the start and
+    end coordinates are identical.
+
+    Parameters:
+        img (numpy.ndarray): Image array to draw on.
+        start_point (tuple): Starting pixel coordinate (x, y).
+        end_point (tuple): Ending pixel coordinate (x, y).
+        fill_value (int or float): Value or color used for drawing.
+        thickness (int): Thickness of the line or point.
+
+    Returns:
+        None
+    """
     draw_point = (start_point == end_point)
 
     if draw_point:
@@ -583,6 +823,33 @@ def draw_rays(rays, detail_draw=True,
               img_shape=(256, 256), dtype=float, standard_value=0,
               should_scale_rays_to_image=True, original_max_width=None, original_max_height=None,
               show_only_reflections=False):
+    """
+    Render rays onto an image or a set of images.
+
+    Each ray can be drawn in full detail (every point) or as straight lines between
+    beam endpoints. Rays can be scaled to match image dimensions and drawn on a
+    single image, multiple images, or separate channels.
+
+    Parameters:
+        rays (list): Nested list of rays in the format rays[ray][beam][point] = (x, y).
+        detail_draw (bool, optional): Whether to draw every point or just beam endpoints (default: True).
+        output_format (str, optional): Output mode: "single_image", "multiple_images", or "channels" (default: "single_image").
+        img_background (numpy.ndarray, optional): Background image; if None, a blank image is created.
+        ray_value (int, float, list, or numpy.ndarray, optional): Pixel intensity or color per reflection (default: 255).
+        ray_thickness (int, optional): Thickness of the drawn lines or points (default: 1).
+        img_shape (tuple, optional): Shape of the generated image if no background is given (default: (256, 256)).
+        dtype (type, optional): Data type for the output image (default: float).
+        standard_value (int or float, optional): Background fill value (default: 0).
+        should_scale_rays_to_image (bool, optional): Whether to scale ray coordinates to match the image (default: True).
+        original_max_width (float, optional): Original image width before scaling.
+        original_max_height (float, optional): Original image height before scaling.
+        show_only_reflections (bool, optional): If True, draws only reflected beams (default: False).
+
+    Returns:
+        numpy.ndarray or list:
+            - Single image if output_format == "single_image" or "channels".
+            - List of images if output_format == "multiple_images".
+    """
     # prepare background image
     if img_background is None:
         img = np.full(shape=img_shape, fill_value=dtype(standard_value), dtype=dtype)
@@ -605,18 +872,19 @@ def draw_rays(rays, detail_draw=True,
         imgs = [np.copy(img) for _ in range(nrays)]
 
     # only reflections
-    if show_only_reflections:
-        new_rays = []
-        for ray in rays:
-            if len(ray) <= 1:
-                continue
+    # if show_only_reflections:
+    #     new_rays = []
+    #     for ray in rays:
+    #         if len(ray) <= 1:
+    #             continue
 
-            new_rays += [ray[1:]]
-        rays = new_rays
+    #         new_rays += [ray[1:]]
+    #     rays = new_rays
 
     # draw on image
     for idx, ray in enumerate(rays):
-        for beam_points in ray:
+        for reflexion_order, beam_points in enumerate(ray):
+            
             if detail_draw:
                 lines = []
                 for cur_point in range(0, len(beam_points)):
@@ -624,22 +892,33 @@ def draw_rays(rays, detail_draw=True,
                     end_point = tuple(map(lambda x:int(x), beam_points[cur_point]))
                     # end_point = tuple(map(lambda x:int(x), beam_points[cur_point+1]))
                     # -> if as small lines then in range: range(0, len(beam_points)-1)
-                    lines += [(start_point, end_point)]
+                    lines += [(start_point, end_point, reflexion_order)]
             else:
                 start_point = tuple(map(lambda x:int(x), beam_points[0]))
                 end_point = tuple(map(lambda x:int(x), beam_points[-1]))
-                lines = [(start_point, end_point)]
+                lines = [(start_point, end_point, reflexion_order)]
             
-            for start_point, end_point in lines:
+            for start_point, end_point, reflexion_order in lines:
+
+                if show_only_reflections and reflexion_order == 0:
+                    continue
+
+                # get cur ray value
+                if type(ray_value) in [list, tuple, np.ndarray]:
+                    # if we print without the first line: first value (index 0) belkongs to the reflexion order 1
+                    cur_reflexion_index = reflexion_order-1 if show_only_reflections else reflexion_order
+                    cur_ray_value = ray_value[min(len(ray_value)-1, cur_reflexion_index)]
+                else:
+                    cur_ray_value = ray_value
 
                 if output_format == "channels":
                     layer = np.ascontiguousarray(img[..., idx])
-                    draw_line_or_point(img=layer, start_point=start_point, end_point=end_point, fill_value=ray_value, thickness=ray_thickness)
+                    draw_line_or_point(img=layer, start_point=start_point, end_point=end_point, fill_value=cur_ray_value, thickness=ray_thickness)
                     img[..., idx] = layer
                 elif output_format == "multiple_images":
-                    draw_line_or_point(img=imgs[idx], start_point=start_point, end_point=end_point, fill_value=ray_value, thickness=ray_thickness)
+                    draw_line_or_point(img=imgs[idx], start_point=start_point, end_point=end_point, fill_value=cur_ray_value, thickness=ray_thickness)
                 else:
-                    draw_line_or_point(img=img, start_point=start_point, end_point=end_point, fill_value=ray_value, thickness=ray_thickness)
+                    draw_line_or_point(img=img, start_point=start_point, end_point=end_point, fill_value=cur_ray_value, thickness=ray_thickness)
 
 
     if output_format == "multiple_images":
@@ -650,19 +929,19 @@ def draw_rays(rays, detail_draw=True,
 
 
 
-def trace_and_draw_rays(rel_position, img_src, directions_in_degree,
-             rays, individual_ray_outpout=False, as_channels=True, 
-             img_background=None, ray_value=255, ray_thickness=1, 
-             img_shape=(256, 256), dtype=float, standard_value=0,
-             should_scale_rays_to_image=True):
-    rays = trace_beams(rel_position=rel_position, img_src=img_src, directions_in_degree=directions_in_degree)
+# def trace_and_draw_rays(rel_position, img_src, directions_in_degree,
+#              rays, individual_ray_outpout=False, as_channels=True, 
+#              img_background=None, ray_value=255, ray_thickness=1, 
+#              img_shape=(256, 256), dtype=float, standard_value=0,
+#              should_scale_rays_to_image=True):
+#     rays = trace_beams(rel_position=rel_position, img_src=img_src, directions_in_degree=directions_in_degree)
 
-    img = draw_rays(rays, individual_ray_outpout=individual_ray_outpout, as_channels=as_channels, 
-                    img_background=img_background, ray_value=ray_value, ray_thickness=ray_thickness, 
-                    img_shape=img_shape, dtype=dtype, standard_value=standard_value,
-                    should_scale_rays_to_image=should_scale_rays_to_image)
+#     img = draw_rays(rays, individual_ray_outpout=individual_ray_outpout, as_channels=as_channels, 
+#                     img_background=img_background, ray_value=ray_value, ray_thickness=ray_thickness, 
+#                     img_shape=img_shape, dtype=dtype, standard_value=standard_value,
+#                     should_scale_rays_to_image=should_scale_rays_to_image)
     
-    return img
+#     return img
 
 
 

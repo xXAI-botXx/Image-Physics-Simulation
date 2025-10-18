@@ -1,0 +1,10 @@
+loaders:
+  - type: python
+    search_path: ["./img_phys_sim"]
+renderer:
+  type: markdown
+  filename: docs.md
+  - title: API Documentation
+    name: index
+    contents:
+    - school.*

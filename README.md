@@ -10,7 +10,7 @@ Contents:
 - [Raytracing Tutorial](#raytracing-tutorial)
 - [Performance Test](#performance-test)
 
-[> Documentation <](.FIXME)
+[> Documentation <](https://xxai-botxx.github.io/Image-Physics-Simulation/img_phy_sim.html)
 
 <img src="./img_phy_sim/raytracing_example.png"></img>
 
@@ -229,6 +229,7 @@ Features are:
     - Multiple Images (each ray on one image) -> `multiple_images`
     - One Image and each channel is one ray -> `channels`
 - Showing only the reflexions
+- Give different values for different reflexion orders
 ```
 ray_img = ips.ray_tracing.draw_rays(rays, detail_draw=False, 
                                     output_format="single_image", 
