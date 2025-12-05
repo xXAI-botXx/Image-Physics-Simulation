@@ -66,6 +66,7 @@ from img_phy_sim.img import open as img_open, get_width_height
 from img_phy_sim.math import degree_to_vector, vector_to_degree, normalize_point
 
 import builtins
+import pickle
 import math
 import copy
 
@@ -78,6 +79,295 @@ import cv2
 # >>> Helper <<<
 # --------------
 
+class RayIterator:
+    """
+    A container class to save every step of a ray tracing process.
+    """
+    def __init__(self, other_ray_iterator=None):
+        """
+        Initialize a RayIterator instance.
+        
+        Parameters:
+        - other_ray_iterator (RayIterator, optional): 
+            An existing RayIterator to copy. If provided, creates a deep copy 
+            of the other iterator's rays_collection. If None, creates an empty iterator.
+            
+        Returns:
+        None
+        """
+        if other_ray_iterator is None:
+            self.rays_collection = []
+        else:
+            self.rays_collection = copy.deepcopy(other_ray_iterator.rays_collection)
+
+    def __repr__(self):
+        """
+        Return a string representation of the RayIterator.
+        
+        Returns:
+        str: String representation showing the number of iterations/time-steps.
+        """
+        return f"RayIterator with {self.len_iterations()} iterations (time-steps)."
+
+    def __iter__(self):
+        """
+        Make the RayIterator iterable over its rays collections.
+        
+        Yields:
+        list: Each iteration's collection of rays.
+        """
+        for rays in self.rays_collection:
+            yield rays
+
+    def __getitem__(self, key):
+        """
+        Get rays from the latest iteration using key/index.
+        
+        Parameters:
+        - key (int or slice): Index or slice to access rays in the latest iteration.
+        
+        Returns:
+        list: Rays from the latest iteration corresponding to the key.
+        """
+        return self.rays_collection[-1][key]
+    
+    def __len__(self):
+        """
+        Get the number of rays in the latest iteration.
+        
+        Returns:
+        int: Number of rays in the latest iteration.
+        """
+        return len(self.rays_collection[-1])
+    
+    def __add__(self, other):
+        """
+        Add another RayIterator or value to this RayIterator element-wise.
+        
+        Parameters:
+        - other (RayIterator or any): 
+            If RayIterator: combines ray collections from both iterators. 
+            If other type: adds the value to each ray in all iterations.
+        
+        Returns:
+        RayIterator: New RayIterator containing the combined/adjusted results.
+        
+        Raises:
+        TypeError: If other is not a RayIterator and addition operation fails.
+        """
+        if isinstance(other, RayIterator):
+            new_iterator = RayIterator()
+            if self.len_iterations() > other.len_iterations():
+                iter_1 = self
+                iter_2 = other
+            else:
+                iter_1 = other
+                iter_2 = self
+
+            iter_1 = copy.deepcopy(iter_1)
+            iter_2 = copy.deepcopy(iter_2)
+
+            for idx in range(iter_1.len_iterations()):
+                cur_addition = iter_1.get_iteration(idx)
+                if iter_2.len_iterations() > idx:
+                    cur_addition += iter_2.get_iteration(idx)
+                elif iter_2.len_iterations() == 0:
+                    pass
+                else:
+                    cur_addition += iter_2.get_iteration(-1)
+
+                new_iterator.add_iteration(cur_addition)
+
+            return new_iterator
+        else:
+            new_iterator = RayIterator()
+
+            for idx in range(self.len_iterations()):
+                cur_addition = self.get_iteration(idx) + other
+                new_iterator.add_iteration(cur_addition)
+
+            return new_iterator
+        
+    def __iadd__(self, other):
+        """
+        In-place addition of another RayIterator or value.
+        
+        Parameters:
+        - other (RayIterator or any): 
+            Object to add to this RayIterator.
+        
+        Returns:
+        RayIterator: self, after performing the in-place addition.
+        """
+        new_iterator = self.__add__(other) 
+        self.rays_collection = new_iterator.rays_collection
+        return self
+    
+    def len_iterations(self):
+        """
+        Get the total number of iterations/time-steps stored.
+        
+        Returns:
+        int: 
+            Number of iterations in the rays_collection.
+        """
+        return len(self.rays_collection)
+
+    def add_iteration(self, rays):
+        """
+        Add a new iteration (collection of rays) to the iterator.
+        
+        Parameters:
+        - rays (list): Collection of rays to add as a new iteration.
+            Format: rays[ray][beam][point] = (x, y)
+        
+        Returns:
+        RayIterator: self, for method chaining.
+        """
+        self.rays_collection += [copy.deepcopy(rays)]
+        return self
+    
+    def add_rays(self, rays):
+        """
+        Add rays to the every iteration (in-place modification).
+        If one iterator have less steps, the last step will be used for all other iterations.
+        Which equals no change for those iterations.
+        
+        Parameters:
+        - rays (list): Rays to add to the latest iteration.
+            Format: rays[ray][beam][point] = (x, y)
+        
+        Returns:
+        list: The updated rays_collection.
+        """
+        self.rays_collection = self.__add__(copy.deepcopy(rays)).rays_collection
+        return self.rays_collection
+
+    def print_info(self):
+        """
+        Print statistical information about the ray collections.
+        
+        Displays:
+        - Number of iterations
+        - Information about the latest iteration's rays including:
+          * Number of rays, beams, reflexions, and points
+          * Mean, median, max, min, and variance for beams per ray, 
+            reflexions per ray, and points per beam
+          * Value range for x and y coordinates
+        
+        Returns:
+        None
+        """
+        print(f"Ray Iterator with {self.len_iterations()} iterations (time-steps).")
+        print("Latest Rays Info:\n")
+        print_rays_info(self.rays_collection[-1])
+        # for idx, rays in enumerate(self.rays_collection):
+        #     print(f"--- Rays Set {idx} ---")
+        #     print_rays_info(rays)
+
+    def reduce_to_x_steps(self, x_steps):
+        """
+        Reduce the number of stored iterations to approximately x_steps.
+        
+        Uses linear sampling to keep representative iterations while reducing
+        memory usage. If x_steps is greater than current iterations, does nothing.
+        
+        Parameters:
+        - x_steps (int): 
+            Desired number of iterations to keep.
+        
+        Returns:
+        None
+        """
+        if x_steps >= self.len_iterations():
+            return  # nothing to do
+
+        step_size = self.len_iterations() / x_steps
+        new_rays_collection = []
+        for i in range(x_steps):
+            index = int(i * step_size)
+            new_rays_collection += [self.get_iteration(index)]
+
+        self.rays_collection = new_rays_collection
+
+    def apply_and_update(self, func):
+        """
+        Apply a function to each iteration's rays and update in-place.
+        
+        Parameters:
+        - func (callable): 
+            Function that takes a rays collection and returns a modified rays collection. 
+            Will be applied to each iteration.
+        
+        Returns:
+        None
+        """
+        for i in range(self.len_iterations()):
+            self.rays_collection[i] = func(self.rays_collection[i])
+    
+    def apply_and_return(self, func):
+        """
+        Apply a function to each iteration's rays and return results.
+        
+        Parameters:
+        - func (callable): 
+            Function that takes a rays collection and returns some result. 
+            Will be applied to each iteration.
+        
+        Returns:
+        list: 
+            Results of applying func to each iteration's rays.
+        """
+        results = []
+        for i in range(self.len_iterations()):
+            results += [func(self.rays_collection[i])]
+
+        return results
+    
+    def get_iteration(self, index):
+        """
+        Get a specific iteration's rays collection.
+        
+        Parameters:
+        - index (int): 
+            Index of the iteration to retrieve. Supports negative indexing (e.g., -1 for last iteration).
+        
+        Returns:
+        list: 
+            Rays collection at the specified iteration.
+        
+        Raises: 
+        IndexError: If index is out of range.
+        """
+        if index < -1 * self.len_iterations() or index >= self.len_iterations():
+            raise IndexError("RayIterator index out of range.")
+        return self.rays_collection[index]
+
+# def convert_rays_to_ray_iterator(rays):
+#     """
+#     Convert a list of rays into a RayIterator with a single iteration.
+
+#     Parameters:
+#     - rays (list): 
+#         Nested list structure representing rays. Format: rays[ray][beam][point] = (x, y)
+#     Returns:
+#     - RayIterator:
+#         RayIterator containing the provided rays as its only iteration.
+#     """
+#     ray_iterator = RayIterator()
+#     cur_rays = []
+
+#     max_iterations
+
+#     for ray_idx in range(len(rays)):
+#         max_beams = max([len(beams) for beams in rays[ray_idx]])
+#         for cur_beam_idx in range(max_beams):
+#             ray = []
+#             for point in rays[ray_idx][cur_beam_idx]:
+#                 cur_rays += [ray]
+#         ray_iterator.add_iteration(cur_rays)
+#     return ray_iterator
+
 def print_rays_info(rays):
     """
     Print statistical information about a collection of rays.
@@ -88,78 +378,81 @@ def print_rays_info(rays):
     - Mean, median, max, min, and variance for beams per ray, reflexions per ray, and points per beam
     - Value range for x and y coordinates
 
-    Parameter:
+    Parameters:
     - rays (list): 
         Nested list structure representing rays. Format: rays[ray][beam][point] = (x, y)
     """
-    nrays = 0
-    nbeams = 0
-    nbeams_per_ray = []
-    nreflexions = 0
-    nreflexions_per_ray = []
-    npoints = 0
-    npoints_per_beam_point = []
-    values_per_point = []
-    min_x_value = None
-    max_x_value = None
-    min_y_value = None
-    max_y_value = None
-    for ray in rays:
-        nrays += 1
-        cur_beams = 0
-        cur_reflexions = 0
-        for beam_points in ray:
-            nbeams += 1
-            nreflexions += 1
-            cur_beams += 1
-            cur_reflexions += 1
-            cur_points = 0
-            for x in beam_points:
-                npoints += 1
-                cur_points += 1
-                values_per_point += [len(x)]
-                min_x_value = x[0] if min_x_value is None else min(min_x_value, x[0])
-                max_x_value = x[0] if max_x_value is None else max(max_x_value, x[0])
-                min_y_value = x[1] if min_y_value is None else min(min_y_value, x[1])
-                max_y_value = x[1] if max_y_value is None else max(max_y_value, x[1])
-            npoints_per_beam_point += [cur_points]
-        nreflexions -= 1
-        cur_reflexions -= 1
-        nreflexions_per_ray += [cur_reflexions]
-        nbeams_per_ray += [cur_beams]
+    if isinstance(rays, RayIterator):
+        rays.print_info()
+    else:
+        nrays = 0
+        nbeams = 0
+        nbeams_per_ray = []
+        nreflexions = 0
+        nreflexions_per_ray = []
+        npoints = 0
+        npoints_per_beam_point = []
+        values_per_point = []
+        min_x_value = None
+        max_x_value = None
+        min_y_value = None
+        max_y_value = None
+        for ray in rays:
+            nrays += 1
+            cur_beams = 0
+            cur_reflexions = 0
+            for beam_points in ray:
+                nbeams += 1
+                nreflexions += 1
+                cur_beams += 1
+                cur_reflexions += 1
+                cur_points = 0
+                for x in beam_points:
+                    npoints += 1
+                    cur_points += 1
+                    values_per_point += [len(x)]
+                    min_x_value = x[0] if min_x_value is None else min(min_x_value, x[0])
+                    max_x_value = x[0] if max_x_value is None else max(max_x_value, x[0])
+                    min_y_value = x[1] if min_y_value is None else min(min_y_value, x[1])
+                    max_y_value = x[1] if max_y_value is None else max(max_y_value, x[1])
+                npoints_per_beam_point += [cur_points]
+            nreflexions -= 1
+            cur_reflexions -= 1
+            nreflexions_per_ray += [cur_reflexions]
+            nbeams_per_ray += [cur_beams]
 
-    print(f"Rays: {nrays}")
-    print(f"Beams: {nbeams}")
-    print(f"    - Mean Beams per Ray: {round(np.mean(nbeams_per_ray), 1)}")
-    print(f"        - Median: {round(np.median(nbeams_per_ray), 1)}")
-    print(f"        - Max: {round(np.max(nbeams_per_ray), 1)}")
-    print(f"        - Min: {round(np.min(nbeams_per_ray), 1)}")
-    print(f"        - Variance: {round(np.std(nbeams_per_ray), 1)}")
-    print(f"Reflexions: {nreflexions}")
-    print(f"    - Mean Reflexions per Ray: {round(np.mean(nreflexions_per_ray), 1)}")
-    print(f"        - Median: {round(np.median(nreflexions_per_ray), 1)}")
-    print(f"        - Max: {round(np.max(nreflexions_per_ray), 1)}")
-    print(f"        - Min: {round(np.min(nreflexions_per_ray), 1)}")
-    print(f"        - Variance: {round(np.std(nreflexions_per_ray), 1)}")
-    print(f"Points: {npoints}")
-    print(f"    - Mean Points per Beam: {round(np.mean(npoints_per_beam_point), 1)}")
-    print(f"        - Median: {round(np.median(npoints_per_beam_point), 1)}")
-    print(f"        - Max: {round(np.max(npoints_per_beam_point), 1)}")
-    print(f"        - Min: {round(np.min(npoints_per_beam_point), 1)}")
-    print(f"        - Variance: {round(np.std(npoints_per_beam_point), 1)}")
-    print(f"    - Mean Point Values: {round(np.mean(values_per_point), 1)}")
-    print(f"        - Median: {round(np.median(values_per_point), 1)}")
-    print(f"        - Variance: {round(np.std(values_per_point), 1)}")
-    print(f"\nValue-Range:\n  x ∈ [{min_x_value:.2f}, {max_x_value:.2f}]\n  y ∈ [{min_y_value:.2f}, {max_y_value:.2f}]")
-    # [ inclusive, ( number is not included
+        print(f"Rays: {nrays}")
+        print(f"Beams: {nbeams}")
+        print(f"    - Mean Beams per Ray: {round(np.mean(nbeams_per_ray), 1)}")
+        print(f"        - Median: {round(np.median(nbeams_per_ray), 1)}")
+        print(f"        - Max: {round(np.max(nbeams_per_ray), 1)}")
+        print(f"        - Min: {round(np.min(nbeams_per_ray), 1)}")
+        print(f"        - Variance: {round(np.std(nbeams_per_ray), 1)}")
+        print(f"Reflexions: {nreflexions}")
+        print(f"    - Mean Reflexions per Ray: {round(np.mean(nreflexions_per_ray), 1)}")
+        print(f"        - Median: {round(np.median(nreflexions_per_ray), 1)}")
+        print(f"        - Max: {round(np.max(nreflexions_per_ray), 1)}")
+        print(f"        - Min: {round(np.min(nreflexions_per_ray), 1)}")
+        print(f"        - Variance: {round(np.std(nreflexions_per_ray), 1)}")
+        print(f"Points: {npoints}")
+        print(f"    - Mean Points per Beam: {round(np.mean(npoints_per_beam_point), 1)}")
+        print(f"        - Median: {round(np.median(npoints_per_beam_point), 1)}")
+        print(f"        - Max: {round(np.max(npoints_per_beam_point), 1)}")
+        print(f"        - Min: {round(np.min(npoints_per_beam_point), 1)}")
+        print(f"        - Variance: {round(np.std(npoints_per_beam_point), 1)}")
+        print(f"    - Mean Point Values: {round(np.mean(values_per_point), 1)}")
+        print(f"        - Median: {round(np.median(values_per_point), 1)}")
+        print(f"        - Variance: {round(np.std(values_per_point), 1)}")
+        print(f"\nValue-Range:\n  x ∈ [{min_x_value:.2f}, {max_x_value:.2f}]\n  y ∈ [{min_y_value:.2f}, {max_y_value:.2f}]")
+        # [ inclusive, ( number is not included
 
-    if nrays > 0:
-        print(f"\nExample:\nRay 1, beams: {len(rays[0])}")
-        if nbeams > 0:
-            print(f"Ray 1, beam 1, points: {len(rays[0][0])}")
-            if npoints > 0:
-                print(f"Ray 1, beam 1, point 1: {len(rays[0][0][0])}")
-    print("\n")
+        if nrays > 0:
+            print(f"\nExample:\nRay 1, beams: {len(rays[0])}")
+            if nbeams > 0:
+                print(f"Ray 1, beam 1, points: {len(rays[0][0])}")
+                if npoints > 0:
+                    print(f"Ray 1, beam 1, point 1: {len(rays[0][0][0])}")
+        print("\n")
 
 
 
@@ -170,7 +463,7 @@ def save(path, rays):
     The rays are serialized using a simple text-based format. 
     Each ray is delimited by '>' and '<', and each point is represented as "x | y".
 
-    Parameter:
+    Parameters:
     - path (str): 
         Path to the file where data should be saved. If no '.txt' extension is present, it will be appended automatically.
     - rays (list): 
@@ -179,6 +472,12 @@ def save(path, rays):
     Returns:
         None
     """
+    if isinstance(rays, RayIterator):
+        if not path.endswith(".pkl"):
+            path += ".pkl"
+        pickle.dump(rays, builtins.open(path, "wb"))
+        return
+    
     # transform rays into an string
     rays_str = ""
     for ray in rays:
@@ -199,13 +498,13 @@ def save(path, rays):
 
 
 
-def open(path) -> list:
+def open(path, is_iterator=False) -> list:
     """
     Open and parse a ray text file into a structured list.
 
     The file is expected to follow the same format as produced by `save()`.
 
-    Parameter:
+    Parameters:
     - path (str): 
         Path to the .txt file containing ray data.
 
@@ -213,6 +512,12 @@ def open(path) -> list:
     - list: 
         Nested list structure representing rays. Format: rays[ray][beam][point] = (x, y)
     """
+    if is_iterator or path.endswith(".pkl"):
+        if not path.endswith(".pkl"):
+            path += ".pkl"
+        rays = pickle.load(builtins.open(path, "rb"))
+        return rays
+
     if not path.endswith(".txt"):
         path += ".txt"
 
@@ -252,7 +557,7 @@ def merge(rays_1, rays_2, *other_rays_):
     """
     Merge multiple ray datasets into a single list.
 
-    Parameter:
+    Parameters:
     - rays_1 (list): 
         First set of rays.
     - rays_2 (list): 
@@ -265,8 +570,10 @@ def merge(rays_1, rays_2, *other_rays_):
         Combined list of all rays.
     """
     merged = rays_1 + rays_2
+
     for rays in other_rays_:
         merged += rays
+
     return merged
 
 
@@ -310,7 +617,7 @@ def get_all_pixel_coordinates_in_between(x1, y1, x2, y2):
 
     https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
 
-    Parameter:
+    Parameters:
     - x1 (int): 
         Starting x-coordinate.
     - y1 (int): 
@@ -361,7 +668,7 @@ def get_wall_map(img, wall_values=None, thickness=1):
     """
     Generate a wall map where each pixel encodes the wall orientation (in degrees).
 
-    Parameter:
+    Parameters:
     - img (numpy.ndarray): 
         Input image representing scene or segmentation mask.
     - wall_values (list, optional): 
@@ -418,7 +725,7 @@ def update_pixel_position(direction_in_degree, cur_position, target_line):
     Combines the direction vector with a vector pointing toward the closest point
     on the target line, ensuring pixel-wise movement (discrete steps).
 
-    Parameter:
+    Parameters:
     - direction_in_degree (float): 
         Movement direction in degrees.
     - cur_position (tuple): 
@@ -480,7 +787,7 @@ def calc_reflection(collide_vector, wall_vector):
     The reflection is computed using the wall's normal vector and the formula:
         r = v - 2 * (v · n) * n
 
-    Parameter:
+    Parameters:
     - collide_vector (array-like): 
         Incoming vector (2D).
     - wall_vector (array-like): 
@@ -516,7 +823,7 @@ def get_img_border_vector(position, max_width, max_height):
     """
     Determine the wall normal vector for an image border collision.
 
-    Parameter:
+    Parameters:
     - position (tuple): 
         Current position (x, y).
     - max_width (int): 
@@ -546,14 +853,15 @@ def trace_beam(abs_position,
                wall_values, 
                img_border_also_collide=False,
                reflexion_order=3,
-               should_scale=True):
+               should_scale=True,
+               should_return_iterative=False):
     """
     Trace a ray (beam) through an image with walls and reflections.
 
     The beam starts from a given position and follows a direction until it hits
     a wall or border. On collisions, reflections are computed using wall normals.
 
-    Parameter:
+    Parameters:
     - abs_position (tuple): 
         Starting position (x, y) of the beam.
     - img (numpy.ndarray): 
@@ -570,6 +878,8 @@ def trace_beam(abs_position,
         Number of allowed reflections (default: 3).
     - should_scale (bool, optional): 
         Whether to normalize positions to [0, 1] (default: True).
+    - should_return_iterative (bool, optional): 
+        Whether to return a RayIterator for step-by-step analysis (default: False).
 
     Returns:
     - list: 
@@ -580,6 +890,7 @@ def trace_beam(abs_position,
     IMG_WIDTH, IMG_HEIGHT =  get_width_height(img)
 
     ray = []
+    ray_iterator = RayIterator()
 
     cur_target_abs_position = abs_position
     cur_direction_in_degree = direction_in_degree % 360
@@ -590,6 +901,7 @@ def trace_beam(abs_position,
             current_ray_line = [normalize_point(point=cur_target_abs_position, width=IMG_WIDTH, height=IMG_HEIGHT)]
         else:
             current_ray_line = [(cur_target_abs_position[0], cur_target_abs_position[1])]
+        ray_iterator.add_iteration([copy.deepcopy(ray)+[current_ray_line]])
 
         last_abs_position = cur_target_abs_position
 
@@ -613,6 +925,7 @@ def trace_beam(abs_position,
             # check if ray is at end
             if not (0 <= current_position[0] < IMG_WIDTH and 0 <= current_position[1] < IMG_HEIGHT):
                 ray += [current_ray_line]
+                # ray_iterator.add_iteration(ray)
                 # last_position_saved = True
 
                 if img_border_also_collide:
@@ -630,6 +943,8 @@ def trace_beam(abs_position,
                     cur_direction_in_degree = new_direction_in_degree
                     break
                 else:
+                    if should_return_iterative:
+                        return ray_iterator
                     return ray
 
             next_pixel = img[int(current_position[1]), int(current_position[0])]
@@ -642,6 +957,7 @@ def trace_beam(abs_position,
                 #     current_ray_line += [(current_position[0], current_position[1])]
                 last_abs_position = (current_position[0], current_position[1])
                 ray += [current_ray_line]
+                # ray_iterator.add_iteration(ray)
                 # last_position_saved = True
 
                 # get building wall reflection angle
@@ -664,12 +980,16 @@ def trace_beam(abs_position,
                     current_ray_line += [normalize_point(point=current_position, width=IMG_WIDTH, height=IMG_HEIGHT)]
                 else:
                     current_ray_line += [(current_position[0], current_position[1])]
+                ray_iterator.add_iteration([copy.deepcopy(ray)+[current_ray_line]])
                 last_abs_position = (current_position[0], current_position[1])
 
         # if last_position_saved == False:
         #     ray += [current_ray_line]
     
+    if should_return_iterative:
+        return ray_iterator
     return ray
+    
 
 
 def trace_beam_with_DDA(abs_position, 
@@ -679,18 +999,19 @@ def trace_beam_with_DDA(abs_position,
                wall_values, 
                img_border_also_collide=False,
                reflexion_order=3,
-               should_scale=True):
+               should_scale=True,
+               should_return_iterative=False):
     """
     Trace a ray (beam) through a 2D image using a DDA (Digital Differential Analyzer)
     algorithm with precise collision points and physically accurate reflections.
 
     The beam starts at a given floating-point position and marches through the grid
     until it intersects a wall or exits the image. For each collision, the exact
-    hit position is computed using the ray parameter t_hit, ensuring that reflected
+    hit position is computed using the ray Parameters t_hit, ensuring that reflected
     segments contain meaningful geometry rather than single-point artifacts.
     Reflections are computed using wall normals derived from the `wall_map`.
 
-    Parameter:
+    Parameters:
     - abs_position (tuple of float): 
         Starting position (x, y) of the beam in absolute pixel space.
     - img (numpy.ndarray): 
@@ -713,6 +1034,8 @@ def trace_beam_with_DDA(abs_position,
     - should_scale (bool, optional): 
         If True, all emitted points (x, y) are normalized to [0, 1] range.
         Otherwise absolute pixel positions are returned. Default: True.
+    - should_return_iterative (bool, optional): 
+        Whether to return a RayIterator for step-by-step analysis (default: False).
 
     Returns:
     - list: 
@@ -723,6 +1046,7 @@ def trace_beam_with_DDA(abs_position,
     IMG_WIDTH, IMG_HEIGHT = get_width_height(img)
 
     ray = []
+    ray_iterator = RayIterator()
 
     cur_target_abs_position = (float(abs_position[0]), float(abs_position[1]))
     cur_direction_in_degree = direction_in_degree % 360
@@ -741,6 +1065,7 @@ def trace_beam_with_DDA(abs_position,
             current_ray_line = [normalize_point(point=cur_target_abs_position, width=IMG_WIDTH, height=IMG_HEIGHT)]
         else:
             current_ray_line = [(cur_target_abs_position[0], cur_target_abs_position[1])]
+        ray_iterator.add_iteration([copy.deepcopy(ray)+[current_ray_line]])
 
         last_abs_position = cur_target_abs_position
 
@@ -762,6 +1087,7 @@ def trace_beam_with_DDA(abs_position,
         # outside start -> handle border/reflection/exit
         if not (0 <= x0 < IMG_WIDTH and 0 <= y0 < IMG_HEIGHT):
             ray += [current_ray_line]
+            # ray_iterator.add_iteration(ray)
             if img_border_also_collide:
                 wall_vector = get_img_border_vector(position=(x0, y0), max_width=IMG_WIDTH, max_height=IMG_HEIGHT)
                 new_direction = calc_reflection(collide_vector=degree_to_vector(cur_direction_in_degree), wall_vector=wall_vector)
@@ -769,6 +1095,8 @@ def trace_beam_with_DDA(abs_position,
                 cur_target_abs_position = last_abs_position
                 continue
             else:
+                if should_return_iterative:
+                    return ray_iterator
                 return ray
 
         # DDA parameters
@@ -815,7 +1143,9 @@ def trace_beam_with_DDA(abs_position,
                     current_ray_line += [normalize_point(point=(hit_x, hit_y), width=IMG_WIDTH, height=IMG_HEIGHT)]
                 else:
                     current_ray_line += [(hit_x, hit_y)]
+                ray_iterator.add_iteration([copy.deepcopy(ray)+[current_ray_line]])
                 ray += [current_ray_line]
+                # ray_iterator.add_iteration(ray)
 
                 building_angle = float(wall_map[cell_y, cell_x])
                 if not np.isfinite(building_angle):
@@ -855,10 +1185,12 @@ def trace_beam_with_DDA(abs_position,
                 current_ray_line += [normalize_point(point=(hit_x, hit_y), width=IMG_WIDTH, height=IMG_HEIGHT)]
             else:
                 current_ray_line += [(hit_x, hit_y)]
+            ray_iterator.add_iteration([copy.deepcopy(ray)+[current_ray_line]])
 
             # Now check if we've left the image bounds (cell_x, cell_y refer to the new cell we stepped into)
             if not (0 <= cell_x < IMG_WIDTH and 0 <= cell_y < IMG_HEIGHT):
                 ray += [current_ray_line]
+                # ray_iterator.add_iteration(ray)
                 last_position_saved = True
 
                 if img_border_also_collide:
@@ -871,6 +1203,8 @@ def trace_beam_with_DDA(abs_position,
                     cur_direction_in_degree = new_direction_in_degree
                     break
                 else:
+                    if should_return_iterative:
+                        return ray_iterator
                     return ray
 
             # sample the pixel in the cell we stepped into
@@ -879,6 +1213,7 @@ def trace_beam_with_DDA(abs_position,
                 # we hit a wall — collision point already appended
                 last_abs_position = (hit_x, hit_y)
                 ray += [current_ray_line]
+                # ray_iterator.add_iteration(ray)
                 last_position_saved = True
 
                 building_angle = float(wall_map[cell_y, cell_x])
@@ -903,7 +1238,10 @@ def trace_beam_with_DDA(abs_position,
         # end DDA loop
         if not last_position_saved:
             ray += [current_ray_line]
+            # ray_iterator.add_iteration(ray)
 
+    if should_return_iterative:
+        return ray_iterator
     return ray
 
 
@@ -917,7 +1255,9 @@ def trace_beams(rel_position,
                 reflexion_order=3,
                 should_scale_rays=True,
                 should_scale_img=True,
-                use_dda=True):
+                use_dda=True,
+                iterative_tracking=False,
+                iterative_steps=None):
     """
     Trace multiple rays (beams) from a single position through an image with walls and reflections.
 
@@ -925,7 +1265,7 @@ def trace_beams(rel_position,
     until it collides with a wall or image border. On collisions, reflections are
     computed based on local wall normals extracted from the image.
 
-    Parameter:
+    Parameters:
     - rel_position (tuple): 
         Relative starting position (x, y) in normalized coordinates [0-1].
     - img_src (str or numpy.ndarray): 
@@ -946,6 +1286,10 @@ def trace_beams(rel_position,
         Whether to scale the input image before wall detection (default: True).
     - use_dda (bool, optional): 
         Whether to use the DDA-based ray tracing method (default: True).
+    - iterative_tracking (bool, optional): 
+        Whether to return a RayIterator for step-by-step analysis (default: False).
+    - iterative_steps (int, optional):
+        Number of steps for iterative reduction if using iterative tracking. `None` for all steps.
 
     Returns:
     - list: 
@@ -968,24 +1312,35 @@ def trace_beams(rel_position,
     if wall_values is None:
         wall_values = [0.0]
 
-    rays = []
+    if iterative_tracking:
+        rays = RayIterator()
+    else:
+        rays = []
     for direction_in_degree in directions_in_degree:
         if use_dda:
             ray_tracing_func = trace_beam_with_DDA
         else:
             ray_tracing_func = trace_beam
 
-        rays += [ray_tracing_func(
-                    abs_position=abs_position, 
-                    img=img,  
-                    direction_in_degree=direction_in_degree,
-                    wall_map=wall_map,
-                    wall_values=wall_values,
-                    img_border_also_collide=img_border_also_collide, 
-                    reflexion_order=reflexion_order,
-                    should_scale=should_scale_rays
-                 )
-                ]
+        cur_ray_result = ray_tracing_func(
+                            abs_position=abs_position, 
+                            img=img,  
+                            direction_in_degree=direction_in_degree,
+                            wall_map=wall_map,
+                            wall_values=wall_values,
+                            img_border_also_collide=img_border_also_collide, 
+                            reflexion_order=reflexion_order,
+                            should_scale=should_scale_rays,
+                            should_return_iterative=iterative_tracking
+                        )
+        
+        if iterative_tracking:
+            rays.add_rays(cur_ray_result)
+        else:
+            rays += [cur_ray_result]
+
+    if iterative_tracking and iterative_steps is not None:
+        rays.reduce_rays_iteratively(steps=iterative_steps)
 
     return rays
 
@@ -1001,7 +1356,7 @@ def scale_rays(rays,
     Optionally normalizes rays by old dimensions and rescales them to new ones.
     Can scale all points or just the start/end points of each beam.
 
-    Parameter:
+    Parameters:
     - rays (list): 
         Nested list of rays in the format rays[ray][beam][point] = (x, y).
     - max_x (float, optional): 
@@ -1019,6 +1374,10 @@ def scale_rays(rays,
     - list: 
         Scaled rays in the same nested format.
     """
+    if isinstance(rays, RayIterator):
+        rays.apply_and_update(lambda r: scale_rays(r, max_x=max_x, max_y=max_y, new_max_x=new_max_x, new_max_y=new_max_y, detailed_scaling=detailed_scaling))
+        return rays
+
     scaled_rays = []
     for ray in rays:
         scaled_ray = []
@@ -1061,7 +1420,7 @@ def draw_rectangle_with_thickness(img, start_point, end_point, value, thickness=
     Expands the given start and end points based on the desired thickness and
     clips coordinates to image bounds to avoid overflow.
 
-    Parameter:
+    Parameters:
     - img (numpy.ndarray): 
         Image array to draw on.
     - start_point (tuple): 
@@ -1099,7 +1458,7 @@ def draw_line_or_point(img, start_point, end_point, fill_value, thickness):
     Determines whether to draw a point or a line based on whether the start and
     end coordinates are identical.
 
-    Parameter:
+    Parameters:
     - img (numpy.ndarray): 
         Image array to draw on.
     - start_point (tuple): 
@@ -1164,6 +1523,21 @@ def draw_rays(rays, detail_draw=True,
             - Single image if output_format == "single_image" or "channels".
             - List of images if output_format == "multiple_images".
     """
+    if isinstance(rays, RayIterator):
+        imgs = rays.apply_and_return(lambda r: draw_rays(r, detail_draw=detail_draw,
+                                                            output_format=output_format,
+                                                            img_background=img_background,
+                                                            ray_value=ray_value,
+                                                            ray_thickness=ray_thickness,
+                                                            img_shape=img_shape,
+                                                            dtype=dtype,
+                                                            standard_value=standard_value,
+                                                            should_scale_rays_to_image=should_scale_rays_to_image,
+                                                            original_max_width=original_max_width,
+                                                            original_max_height=original_max_height,
+                                                            show_only_reflections=show_only_reflections))
+        return imgs
+
     # prepare background image
     if img_background is None:
         img = np.full(shape=img_shape, fill_value=dtype(standard_value), dtype=dtype)

@@ -10,3 +10,4 @@ dist
 
 
 img_phy_sim.egg-info/*
+example/my_awesome_ray_iterator.pkl

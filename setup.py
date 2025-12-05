@@ -7,8 +7,8 @@ readme = readme.replace('src="./img_phy_sim/raytracing_example.png"', 'src="http
 
 setup(
     name='img-phy-sim',
-    version='0.2',
-    packages=['img_phy_sim'],# find_packages(),
+    version='0.3',
+    packages=find_packages(),  # ['img_phy_sim'],
     install_requires=[
         # List any dependencies here, e.g. 'numpy', 'requests'
         "numpy",
@@ -21,7 +21,7 @@ setup(
     long_description = readme,
     long_description_content_type="text/markdown",
     include_package_data=True,  # Ensures files from MANIFEST.in are included
-    download_url = 'https://github.com/xXAI-botXx/Image-Physics-Simulation/archive/v_01.tar.gz',
+    download_url = 'https://github.com/xXAI-botXx/Image-Physics-Simulation/archive/v_03.tar.gz',
     url="https://github.com/xXAI-botXx/Image-Physics-Simulation",
     project_urls={
         "Documentation": "https://xxai-botxx.github.io/Image-Physics-Simulation/img_phy_sim",
@@ -30,7 +30,6 @@ setup(
     keywords = ['Simulation', 'Computer-Vision', 'Physgen'],
     classifiers=[
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',      # Specify which pyhton versions that you want to support
