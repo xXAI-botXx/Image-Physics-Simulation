@@ -5,6 +5,7 @@ This is a library for 2D Ray-Tracing on an image. For example the Physgen Datase
 Contents:
 - [Installation](#installation)
 - [Download Example Data](#download-example-data)
+- [Pre-Compute Rays](#pre-compute-rays)
 - [Library Overview](#library-overview)
 - [Raytracing Computation](#raytracing-computation)
 - [Raytracing Tutorial](#raytracing-tutorial)
@@ -69,6 +70,82 @@ python physgen_dataset.py --output_real_path ./datasets/physgen_test_raw/real --
 ```bash
 python physgen_dataset.py --output_real_path ./datasets/physgen_val_raw/real --output_osm_path ./datasets/physgen_val_raw/osm --variation sound_reflection --input_type osm --output_type standard --data_mode validation
 ```
+
+<br><br>
+
+### Pre-Compute Rays
+
+We can use the saving/loading functionality of the `ips`-framework to reduce the computational cost during training a deep learning model.
+
+The [ray_tracing_saver.py](./example/ray_tracing_saver.py) is an example of how you can pre-compute all your rays.
+
+During training you can load the rays like this (which will try to load pre-computed but still can compute during runtime.):
+```python
+class PhysGenDataset(Dataset):
+
+    # def __init__(self, ...):
+        # ...
+
+    # def __len__(self):
+        # ..
+
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+
+        if self.input_type == "base_simulation":
+            input_img = self.basesimulation_dataset[idx]["soundmap"]
+        else:
+            input_img = sample["osm"]  # PIL Image
+        target_img = sample["soundmap"]  # PIL Image
+
+        input_img = self.transform(input_img)
+        target_img = self.transform(target_img)
+
+        # Fix real image size 512x512 > 256x256
+        input_img = F.interpolate(input_img.unsqueeze(0), size=(256, 256), mode='bilinear', align_corners=False)
+        input_img = input_img.squeeze(0)
+        
+
+        # reflexions
+        if self.reflexion_channels:
+            height, width = np.squeeze(input_img.cpu().numpy(), axis=0).shape
+            ray_path = os.path.join("./rays", self.mode, str(self.reflexion_steps), f"rays_[{str(idx)}].txt")
+            if os.path.exists(ray_path):
+                rays = ips.ray_tracing.open(path=ray_path)
+            else:
+                rays = ips.ray_tracing.trace_beams(rel_position=(0.5, 0.5),	
+                                                    img_src=np.squeeze(input_img.cpu().numpy(), axis=0),	
+                                                    directions_in_degree=ips.math.get_linear_degree_range(step_size=(self.reflexion_steps/360)*100),	
+                                                    wall_values=[0],	
+                                                    wall_thickness=0,	
+                                                    img_border_also_collide=False,	
+                                                    reflexion_order=3,	
+                                                    should_scale_rays=True,	
+                                                    should_scale_img=False)
+            ray_img = ips.ray_tracing.draw_rays(rays,	
+                                                detail_draw=False,	
+                                                output_format='channels' if self.reflexions_as_channels else 'single_image',	
+                                                img_background=None,	
+                                                ray_value=[50, 100, 255],	
+                                                ray_thickness=1,	
+                                                img_shape=(height, width),
+                                                should_scale_rays_to_image=True,
+                                                show_only_reflections=True)
+            # (256, 256)
+            ray_img = self.transform(ray_img)
+            ray_img = ray_img.float()
+            if ray_img.ndim == 2:
+                ray_img = ray_img.unsqueeze(0)  # (1, H, W)
+
+            # Merging with input image 
+            if ray_img.shape[1:] == input_img.shape[1:]:
+                input_img = torch.cat((input_img, ray_img), dim=0)
+            else:
+                raise ValueError(f"Ray image shape {ray_img.shape} does not match input image shape {input_img.shape}.")
+
+        return input_img, target_img, idx
+```
+
 
 <br><br>
 
